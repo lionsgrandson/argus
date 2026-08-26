@@ -1,0 +1,32 @@
+plugins { id 'com.android.application' }
+
+def bakedRelay = (project.findProperty("BABY_RELAY_URL") ?: "wss://baby-monitor-secure-relay.mosheschwartzberg.workers.dev/ws").toString()
+
+android {
+    namespace 'com.example.babymonitor'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.example.babymonitor'
+        minSdk 26
+        targetSdk 35
+        versionCode 8
+        versionName '2.6-camera-secure-github-build'
+        buildConfigField 'String', 'DEFAULT_RELAY_URL', groovy.json.JsonOutput.toJson(bakedRelay)
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+}
