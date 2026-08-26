@@ -1,0 +1,7 @@
+.gradle/
+.tools/
+.runtime/
+OUTPUT/
+local.properties
+app/build/
+relay-cloudflare/node_modules/
