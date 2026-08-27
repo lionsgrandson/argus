@@ -13,8 +13,6 @@ import android.os.UserManager;
 public class BootReceiver extends BroadcastReceiver {
     static final String ACTION_RESUME_BABY = "com.example.babymonitor.RESUME_CHILD";
     static final String ACTION_RESUME_PARENT = "com.example.babymonitor.RESUME_PARENT";
-    static final String ACTION_ROOT_RESUME_BABY = "com.example.babymonitor.ROOT_RESUME_CHILD";
-    static final String ACTION_ROOT_RESUME_PARENT = "com.example.babymonitor.ROOT_RESUME_PARENT";
 
     private static final String CHANNEL_ID = "argus_resume_v2";
     private static final int NOTIFICATION_ID = 1077;
@@ -31,8 +29,8 @@ public class BootReceiver extends BroadcastReceiver {
         Context appContext = context.getApplicationContext();
         UserManager userManager = (UserManager) appContext.getSystemService(Context.USER_SERVICE);
         if (userManager != null && !userManager.isUserUnlocked()) {
-            // The saved pairing and desired mode live in credential-encrypted
-            // storage. USER_UNLOCKED will arrive after the first unlock.
+            // Pairing and desired mode are in credential-encrypted storage.
+            // USER_UNLOCKED will arrive after the first unlock.
             return;
         }
 
@@ -50,14 +48,13 @@ public class BootReceiver extends BroadcastReceiver {
     }
 
     private void resumeAfterRestart(Context context, String mode) {
-        // Rooted path: if su has already been granted to ARGUS, use it to launch
-        // ARGUS after unlock. Starting the ordinary foreground service from the
-        // foreground Activity avoids modern Android's background camera/mic start
-        // restriction without changing the normal non-root behavior.
-        String rootAction = "baby".equals(mode)
-                ? ACTION_ROOT_RESUME_BABY
-                : ACTION_ROOT_RESUME_PARENT;
-        if (RootSupport.tryLaunchResumeActivity(context, rootAction)) {
+        // Rooted path: if ARGUS has already been granted su access, root launches
+        // the normal resume Activity after unlock. The Activity starts the same
+        // foreground camera/microphone service used during an ordinary manual start.
+        // Once started, ARGUS continues running when the screen is locked or the
+        // user leaves the Activity.
+        String resumeAction = "baby".equals(mode) ? ACTION_RESUME_BABY : ACTION_RESUME_PARENT;
+        if (RootSupport.tryLaunchResumeActivity(context, resumeAction)) {
             cancelResumeNotification(context);
             return;
         }
