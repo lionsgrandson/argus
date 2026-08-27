@@ -65,7 +65,7 @@ public class ReceiverService extends Service {
             initAudio();
             acquireLocks();
             watchdog.scheduleAtFixedRate(this::watchConnection, 3, 3, TimeUnit.SECONDS);
-            new Thread(this::connectionLoop, "ParentConnection").start();
+            new Thread(this::connectionLoop, "ArgusParentConnection").start();
         }
         return START_STICKY;
     }
@@ -90,18 +90,18 @@ public class ReceiverService extends Service {
                 final AtomicBoolean closed = new AtomicBoolean(false);
                 SecureWebSocket socket = new SecureWebSocket(AppPrefs.relay(this), pairing, "parent", new SecureWebSocket.Listener() {
                     @Override public void onOpen() {
-                        AppPrefs.state(ReceiverService.this, "parent", "Connected — waiting for baby phone");
-                        updateNotification("Connected — waiting for baby phone");
+                        AppPrefs.state(ReceiverService.this, "parent", "Connected — waiting for Child phone");
+                        updateNotification("Connected — waiting for Child phone");
                     }
                     @Override public void onText(String text) {
                         if ("PEER:ONLINE".equals(text)) {
                             peerOnline.set(true);
-                            AppPrefs.state(ReceiverService.this, "parent", "Baby phone connected — waiting for stream");
-                            updateNotification("Baby phone connected — waiting for stream");
+                            AppPrefs.state(ReceiverService.this, "parent", "Child phone connected — waiting for stream");
+                            updateNotification("Child phone connected — waiting for stream");
                         } else if ("PEER:OFFLINE".equals(text)) {
                             peerOnline.set(false);
-                            AppPrefs.state(ReceiverService.this, "parent", "Baby phone disconnected");
-                            if (hadLiveAudio) triggerConnectionAlarm("Baby phone disconnected");
+                            AppPrefs.state(ReceiverService.this, "parent", "Child phone disconnected");
+                            if (hadLiveAudio) triggerConnectionAlarm("Child phone disconnected");
                         }
                     }
                     @Override public void onBinary(byte[] data) { handleEncrypted(data); }
@@ -193,7 +193,7 @@ public class ReceiverService extends Service {
     private void watchConnection() {
         if (!running.get() || !hadLiveAudio) return;
         long age = System.currentTimeMillis() - lastAudioAt;
-        if (age > 8000) triggerConnectionAlarm(peerOnline.get() ? "No baby-room audio received" : "Baby phone disconnected");
+        if (age > 8000) triggerConnectionAlarm(peerOnline.get() ? "No Child audio received" : "Child phone disconnected");
     }
 
     private synchronized void triggerConnectionAlarm(String reason) {
@@ -202,9 +202,9 @@ public class ReceiverService extends Service {
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         Intent open = new Intent(this, MainActivity.class);
         PendingIntent pi = PendingIntent.getActivity(this, 21, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-        Notification n = new Notification.Builder(this, "baby_alerts")
+        Notification n = new Notification.Builder(this, "argus_alerts")
                 .setSmallIcon(android.R.drawable.stat_notify_error)
-                .setContentTitle("Baby Monitor connection lost")
+                .setContentTitle("ARGUS connection lost")
                 .setContentText(reason)
                 .setCategory(Notification.CATEGORY_ALARM)
                 .setPriority(Notification.PRIORITY_MAX)
@@ -227,10 +227,10 @@ public class ReceiverService extends Service {
     }
 
     private void notifyLowBattery(int pct) {
-        Notification n = new Notification.Builder(this, "baby_warnings")
+        Notification n = new Notification.Builder(this, "argus_warnings")
                 .setSmallIcon(android.R.drawable.stat_sys_warning)
-                .setContentTitle("Baby phone battery low")
-                .setContentText("Baby-room phone is at " + pct + "%")
+                .setContentTitle("Child phone battery low")
+                .setContentText("Child phone is at " + pct + "%")
                 .setCategory(Notification.CATEGORY_ALARM)
                 .setPriority(Notification.PRIORITY_HIGH)
                 .setAutoCancel(true).build();
@@ -239,12 +239,12 @@ public class ReceiverService extends Service {
 
     private void acquireLocks() {
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
-        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "BabyMonitor:Parent");
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ARGUS:Parent");
         wakeLock.setReferenceCounted(false);
         wakeLock.acquire();
         try {
             WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-            wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "BabyMonitor:ParentWifi");
+            wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "ARGUS:ParentWifi");
             wifiLock.setReferenceCounted(false);
             wifiLock.acquire();
         } catch (Exception ignored) { }
@@ -257,9 +257,9 @@ public class ReceiverService extends Service {
         Intent stop = new Intent(this, ReceiverService.class).setAction(ACTION_STOP);
         PendingIntent stopPi = PendingIntent.getService(this, 11, stop,
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-        return new Notification.Builder(this, "baby_receiver")
+        return new Notification.Builder(this, "argus_receiver")
                 .setSmallIcon(android.R.drawable.ic_lock_silent_mode_off)
-                .setContentTitle("Baby Monitor — Parent phone")
+                .setContentTitle("ARGUS — Parent phone")
                 .setContentText(text).setOngoing(true).setOnlyAlertOnce(true).setContentIntent(content)
                 .addAction(new Notification.Action.Builder(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPi).build())
                 .build();
@@ -271,16 +271,16 @@ public class ReceiverService extends Service {
 
     private void createChannels() {
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        nm.createNotificationChannel(new NotificationChannel("baby_receiver", "Baby monitor listener", NotificationManager.IMPORTANCE_LOW));
-        NotificationChannel alerts = new NotificationChannel("baby_alerts", "Baby monitor connection alarms", NotificationManager.IMPORTANCE_HIGH);
+        nm.createNotificationChannel(new NotificationChannel("argus_receiver", "ARGUS listener", NotificationManager.IMPORTANCE_LOW));
+        NotificationChannel alerts = new NotificationChannel("argus_alerts", "ARGUS connection alarms", NotificationManager.IMPORTANCE_HIGH);
         alerts.enableVibration(true);
-        alerts.setDescription("Loud connection-loss warnings after live monitoring has started");
+        alerts.setDescription("Connection-loss warnings after live monitoring has started");
         alerts.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM),
                 new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build());
         nm.createNotificationChannel(alerts);
-        NotificationChannel warnings = new NotificationChannel("baby_warnings", "Baby monitor battery warnings", NotificationManager.IMPORTANCE_DEFAULT);
+        NotificationChannel warnings = new NotificationChannel("argus_warnings", "ARGUS battery warnings", NotificationManager.IMPORTANCE_DEFAULT);
         warnings.enableVibration(true);
-        warnings.setDescription("Baby-phone low-battery warnings");
+        warnings.setDescription("Child-phone low-battery warnings");
         nm.createNotificationChannel(warnings);
     }
 
