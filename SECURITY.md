@@ -2,7 +2,7 @@
 
 ## Cryptography
 
-Audio and status packets use AES-256-GCM with a 32-byte random key from `SecureRandom`. The key is contained only in the BM2 pairing code and local encrypted app storage; it is never sent to the relay.
+Audio, video, and status packets use AES-256-GCM with a 32-byte random key from `SecureRandom`. The key is contained only in the BM2 pairing code and local encrypted app storage; it is never sent to the relay.
 
 Each sender service instance uses a random 64-bit session value. GCM nonces are 96 bits: the full 64-bit session plus the low 32 bits of the monotonically increasing packet sequence. The codec refuses to continue if the sequence exceeds the 32-bit nonce counter space. At 50 audio packets/sec this limit is far beyond a normal service session.
 
@@ -16,11 +16,15 @@ The relay never receives the AES key, and binary payloads are opaque ciphertext.
 
 ## TLS
 
-The app accepts only `wss://` relay URLs. Its raw `SSLSocket` enables HTTPS endpoint identification, so a valid certificate for the requested hostname is required.
+ARGUS accepts only `wss://` relay URLs. Its raw `SSLSocket` enables HTTPS endpoint identification, so a valid certificate for the requested hostname is required.
 
 ## At-rest secrets
 
 Saved BM2 pairing credentials are encrypted with AES-GCM using a non-exportable AES-256 key generated in `AndroidKeyStore`. Android backup is disabled for the application.
+
+## Background execution
+
+The Child sender is a sticky foreground service and uses the required camera and microphone foreground-service types. It also uses wake/Wi-Fi locks while active. Modern Android versions restrict silently creating camera/microphone foreground services from the background after reboot; ARGUS therefore uses direct reboot recovery only where Android permits it and a user-visible resume action where the platform requires interaction.
 
 ## Threat model limitations
 
@@ -30,4 +34,4 @@ The relay host can observe IP addresses and connection metadata. This is not ano
 
 ## Key rotation
 
-Generate a new pairing code on the baby phone whenever you suspect the old code was exposed. This rotates room ID, relay token and AES key in one action.
+Generate a new pairing QR on the Child phone whenever you suspect the old pairing data was exposed. This rotates room ID, relay token and AES key in one action.
