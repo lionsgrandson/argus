@@ -63,9 +63,9 @@ public class SenderService extends Service {
             codec = new PacketCodec(pairing.encryptionKey);
             acquireLocks();
             startCamera();
-            new Thread(this::connectionLoop, "BabyConnection").start();
-            new Thread(this::audioLoop, "BabyAudio").start();
-            new Thread(this::statusLoop, "BabyStatus").start();
+            new Thread(this::connectionLoop, "ArgusChildConnection").start();
+            new Thread(this::audioLoop, "ArgusChildAudio").start();
+            new Thread(this::statusLoop, "ArgusChildStatus").start();
         }
         return START_STICKY;
     }
@@ -168,7 +168,7 @@ public class SenderService extends Service {
             }
         } catch (Exception e) {
             AppPrefs.state(this, "baby", "Microphone error — monitoring stopped");
-            updateNotification("Microphone error — open app");
+            updateNotification("Microphone error — open ARGUS");
             stopSelf();
         } finally {
             if (recorder != null) {
@@ -208,12 +208,12 @@ public class SenderService extends Service {
 
     private void acquireLocks() {
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
-        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "BabyMonitor:BabyCameraMic");
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ARGUS:ChildCameraMic");
         wakeLock.setReferenceCounted(false);
         wakeLock.acquire();
         try {
             WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-            wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "BabyMonitor:BabyWifi");
+            wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "ARGUS:ChildWifi");
             wifiLock.setReferenceCounted(false);
             wifiLock.acquire();
         } catch (Exception ignored) { }
@@ -226,9 +226,9 @@ public class SenderService extends Service {
         Intent stop = new Intent(this, SenderService.class).setAction(ACTION_STOP);
         PendingIntent stopPi = PendingIntent.getService(this, 10, stop,
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-        return new Notification.Builder(this, "baby_sender")
+        return new Notification.Builder(this, "argus_sender")
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
-                .setContentTitle("Baby Monitor — Baby phone")
+                .setContentTitle("ARGUS — Child phone")
                 .setContentText(text)
                 .setOngoing(true).setOnlyAlertOnce(true).setContentIntent(content)
                 .addAction(new Notification.Action.Builder(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPi).build())
@@ -241,9 +241,16 @@ public class SenderService extends Service {
 
     private void createChannel() {
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        NotificationChannel c = new NotificationChannel("baby_sender", "Baby monitor camera and microphone", NotificationManager.IMPORTANCE_LOW);
-        c.setDescription("Required while the baby-room camera and microphone are active");
+        NotificationChannel c = new NotificationChannel("argus_sender", "ARGUS camera and microphone", NotificationManager.IMPORTANCE_LOW);
+        c.setDescription("Required while ARGUS is transmitting camera and microphone");
         nm.createNotificationChannel(c);
+    }
+
+    @Override public void onTaskRemoved(Intent rootIntent) {
+        if ("baby".equals(AppPrefs.mode(this)) && running.get()) {
+            AppPrefs.state(this, "baby", "Running in background");
+        }
+        super.onTaskRemoved(rootIntent);
     }
 
     @Override public void onDestroy() {
