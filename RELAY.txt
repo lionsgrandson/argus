@@ -1,4 +1,4 @@
-Baby Monitor relay already deployed:
+ARGUS relay already deployed:
 
 WebSocket endpoint:
 wss://baby-monitor-secure-relay.mosheschwartzberg.workers.dev/ws
@@ -6,5 +6,5 @@ wss://baby-monitor-secure-relay.mosheschwartzberg.workers.dev/ws
 Health endpoint:
 https://baby-monitor-secure-relay.mosheschwartzberg.workers.dev/health
 
-The Android APK is built with this relay address preconfigured.
+The ARGUS Android APK is built with this relay address preconfigured.
 The PC does not need to stay on after the APK has been built and installed.
