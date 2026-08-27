@@ -10,8 +10,8 @@ android {
         applicationId 'com.example.babymonitor'
         minSdk 26
         targetSdk 35
-        versionCode 11
-        versionName '2.9-background-resume'
+        versionCode 12
+        versionName '3.0-root-aware-autostart'
         buildConfigField 'String', 'DEFAULT_RELAY_URL', groovy.json.JsonOutput.toJson(bakedRelay)
     }
 
