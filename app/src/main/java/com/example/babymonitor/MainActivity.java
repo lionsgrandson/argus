@@ -15,10 +15,12 @@ import android.view.Gravity;
 import android.view.View;
 import android.widget.*;
 
+import com.google.mlkit.vision.barcode.common.Barcode;
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanner;
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions;
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning;
 import com.google.zxing.BarcodeFormat;
 import com.google.zxing.common.BitMatrix;
-import com.google.zxing.integration.android.IntentIntegrator;
-import com.google.zxing.integration.android.IntentResult;
 import com.google.zxing.qrcode.QRCodeWriter;
 
 public class MainActivity extends Activity {
@@ -40,6 +42,7 @@ public class MainActivity extends Activity {
     private LinearLayout advancedPanel;
     private LinearLayout commonControls;
     private long displayedVideoAt = 0L;
+    private boolean scanInProgress = false;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable refreshTask = new Runnable() {
@@ -105,16 +108,24 @@ public class MainActivity extends Activity {
         ScrollView scroll = new ScrollView(this);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(20), dp(24), dp(20), dp(28));
+        root.setPadding(dp(20), dp(18), dp(20), dp(28));
         root.setBackgroundColor(Color.rgb(247, 248, 250));
         scroll.addView(root);
 
-        TextView title = text("ARGUS", 30, Color.rgb(24, 27, 32), Gravity.CENTER);
-        title.setTypeface(null, android.graphics.Typeface.BOLD);
-        root.addView(title, matchWrap());
+        ImageView brandLogo = new ImageView(this);
+        brandLogo.setImageResource(R.drawable.argus_icon);
+        brandLogo.setAdjustViewBounds(true);
+        brandLogo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        brandLogo.setContentDescription("ARGUS logo");
+        LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(150)
+        );
+        logoParams.setMargins(0, 0, 0, dp(2));
+        root.addView(brandLogo, logoParams);
 
         TextView subtitle = text("Simple private baby monitor", 14, Color.rgb(100, 106, 116), Gravity.CENTER);
-        root.addView(subtitle, spaced(0, dp(4), 0, dp(22)));
+        root.addView(subtitle, spaced(0, 0, 0, dp(18)));
 
         roleChooser = panel();
         TextView chooseTitle = text("Which phone is this?", 24, Color.rgb(28, 32, 39), Gravity.CENTER);
@@ -382,23 +393,43 @@ public class MainActivity extends Activity {
     }
 
     private void scanPairingQr() {
-        IntentIntegrator integrator = new IntentIntegrator(this);
-        integrator.setDesiredBarcodeFormats(IntentIntegrator.QR_CODE);
-        integrator.setPrompt("Scan the QR shown on the Child phone");
-        integrator.setBeepEnabled(false);
-        integrator.setOrientationLocked(false);
-        integrator.initiateScan();
-    }
+        if (scanInProgress) return;
+        scanInProgress = true;
 
-    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        IntentResult result = IntentIntegrator.parseActivityResult(requestCode, resultCode, data);
-        if (result != null) {
-            if (result.getContents() != null) {
-                acceptPairingPayload(result.getContents(), true);
-            }
-            return;
+        try {
+            GmsBarcodeScannerOptions options = new GmsBarcodeScannerOptions.Builder()
+                    .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+                    .enableAutoZoom()
+                    .build();
+            GmsBarcodeScanner scanner = GmsBarcodeScanning.getClient(this, options);
+
+            scanner.startScan()
+                    .addOnSuccessListener(barcode -> {
+                        scanInProgress = false;
+                        String rawValue = barcode.getRawValue();
+                        if (rawValue == null || rawValue.trim().isEmpty()) {
+                            Toast.makeText(this, "No QR data was found", Toast.LENGTH_LONG).show();
+                            return;
+                        }
+                        acceptPairingPayload(rawValue, true);
+                    })
+                    .addOnCanceledListener(() -> scanInProgress = false)
+                    .addOnFailureListener(e -> {
+                        scanInProgress = false;
+                        Toast.makeText(
+                                this,
+                                "Could not open the QR scanner. Try again in a moment.",
+                                Toast.LENGTH_LONG
+                        ).show();
+                    });
+        } catch (RuntimeException e) {
+            scanInProgress = false;
+            Toast.makeText(
+                    this,
+                    "Could not open the QR scanner. Try again in a moment.",
+                    Toast.LENGTH_LONG
+            ).show();
         }
-        super.onActivityResult(requestCode, resultCode, data);
     }
 
     private void handlePairingIntent(Intent intent) {
@@ -421,8 +452,12 @@ public class MainActivity extends Activity {
         String code = payload == null ? "" : payload.trim();
 
         try {
-            if (code.startsWith("argus://")) {
+            if (code.regionMatches(true, 0, "argus://", 0, 8)) {
                 Uri uri = Uri.parse(code);
+                if (!"argus".equalsIgnoreCase(uri.getScheme())
+                        || !"pair".equalsIgnoreCase(uri.getHost())) {
+                    throw new IllegalArgumentException("Wrong ARGUS QR type");
+                }
                 code = uri.getQueryParameter("code");
             }
 
@@ -435,7 +470,7 @@ public class MainActivity extends Activity {
 
             Toast.makeText(this, "Connected to the Child phone", Toast.LENGTH_SHORT).show();
 
-            if (autoStart) handler.postDelayed(this::startParent, 250);
+            if (autoStart) handler.postDelayed(this::startParent, 400);
         } catch (Exception e) {
             Toast.makeText(this, "That QR/link is not a valid ARGUS pairing", Toast.LENGTH_LONG).show();
         }
@@ -505,11 +540,21 @@ public class MainActivity extends Activity {
         AppPrefs.setMode(this, "parent");
         AppPrefs.prefs(this).edit().putString(ROLE_PREF, "parent").apply();
 
-        Intent i = new Intent(this, ReceiverService.class);
-        if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
-        else startService(i);
-
-        refreshState();
+        try {
+            Intent i = new Intent(this, ReceiverService.class);
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
+            else startService(i);
+            refreshState();
+        } catch (RuntimeException e) {
+            AppPrefs.setMode(this, "none");
+            AppPrefs.state(this, "parent", "Could not start parent monitor");
+            Toast.makeText(
+                    this,
+                    "Connected, but Android could not start monitoring. Tap Start watching to retry.",
+                    Toast.LENGTH_LONG
+            ).show();
+            refreshState();
+        }
     }
 
     private void saveRelay() {
