@@ -45,6 +45,11 @@ public class SenderService extends Service {
             return START_NOT_STICKY;
         }
 
+        // On rooted phones this gives the root manager a chance to grant ARGUS
+        // persistent su access during an ordinary user-initiated start. On normal
+        // phones it fails quietly and has no effect.
+        RootSupport.preAuthorizeAsync();
+
         if (Build.VERSION.SDK_INT >= 30) {
             startForeground(NOTIF_ID, notification("Starting camera + microphone…"),
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE | ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA);
