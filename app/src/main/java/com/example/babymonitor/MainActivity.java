@@ -124,7 +124,7 @@ public class MainActivity extends Activity {
         logoParams.setMargins(0, 0, 0, dp(2));
         root.addView(brandLogo, logoParams);
 
-        TextView subtitle = text("Simple private baby monitor", 14, Color.rgb(100, 106, 116), Gravity.CENTER);
+        TextView subtitle = text("Private live audio + camera", 14, Color.rgb(100, 106, 116), Gravity.CENTER);
         root.addView(subtitle, spaced(0, 0, 0, dp(18)));
 
         roleChooser = panel();
@@ -156,12 +156,16 @@ public class MainActivity extends Activity {
         babyPanel.addView(text(
                 "Camera and microphone stay active while the screen is locked.",
                 14, Color.rgb(92, 99, 109), Gravity.START
-        ), spaced(0, dp(4), 0, dp(12)));
+        ), spaced(0, dp(4), 0, dp(4)));
+        babyPanel.addView(text(
+                "ARGUS keeps transmitting in the background until you stop it.",
+                13, Color.rgb(92, 99, 109), Gravity.START
+        ), spaced(0, 0, 0, dp(12)));
 
         babyState = statusText("Stopped");
         babyPanel.addView(babyState, spaced(0, 0, 0, dp(14)));
 
-        Button startBaby = primaryButton("START CHILD MONITOR");
+        Button startBaby = primaryButton("START TRANSMITTING");
         startBaby.setOnClickListener(v -> startBaby());
         babyPanel.addView(startBaby,
                 new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(58)));
@@ -243,7 +247,7 @@ public class MainActivity extends Activity {
         commonControls = new LinearLayout(this);
         commonControls.setOrientation(LinearLayout.VERTICAL);
 
-        Button stop = button("Stop monitoring");
+        Button stop = button("Stop ARGUS");
         stop.setOnClickListener(v -> stopEverything());
         commonControls.addView(stop, spaced(0, dp(14), 0, dp(6)));
 
@@ -273,6 +277,10 @@ public class MainActivity extends Activity {
         Button rotatePairing = button("Create a new pairing QR");
         rotatePairing.setOnClickListener(v -> rotatePairing());
         advancedPanel.addView(rotatePairing, spaced(0, 0, 0, dp(6)));
+
+        Button backgroundBtn = button("Background battery settings");
+        backgroundBtn.setOnClickListener(v -> openBackgroundSettings());
+        advancedPanel.addView(backgroundBtn, spaced(0, 0, 0, dp(6)));
 
         Button settingsBtn = button("Android app settings");
         settingsBtn.setOnClickListener(v -> openAppSettings());
@@ -519,7 +527,7 @@ public class MainActivity extends Activity {
 
         Toast.makeText(
                 this,
-                "Child monitor is running. You can lock this phone.",
+                "ARGUS is transmitting. You can lock this phone.",
                 Toast.LENGTH_LONG
         ).show();
         refreshState();
@@ -547,7 +555,7 @@ public class MainActivity extends Activity {
             refreshState();
         } catch (RuntimeException e) {
             AppPrefs.setMode(this, "none");
-            AppPrefs.state(this, "parent", "Could not start parent monitor");
+            AppPrefs.state(this, "parent", "Could not start parent listener");
             Toast.makeText(
                     this,
                     "Connected, but Android could not start monitoring. Tap Start watching to retry.",
@@ -579,7 +587,7 @@ public class MainActivity extends Activity {
         if (videoView != null) videoView.setImageDrawable(null);
 
         AppPrefs.setMode(this, "none");
-        Toast.makeText(this, "Monitoring stopped", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "ARGUS stopped", Toast.LENGTH_SHORT).show();
         refreshState();
     }
 
@@ -591,6 +599,14 @@ public class MainActivity extends Activity {
         AppPrefs.setMode(this, "none");
         AppPrefs.prefs(this).edit().remove(ROLE_PREF).apply();
         showRoleChoice();
+    }
+
+    private void openBackgroundSettings() {
+        try {
+            startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+        } catch (RuntimeException e) {
+            openAppSettings();
+        }
     }
 
     private void openAppSettings() {
