@@ -8,10 +8,13 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
+import android.os.UserManager;
 
 public class BootReceiver extends BroadcastReceiver {
     static final String ACTION_RESUME_BABY = "com.example.babymonitor.RESUME_CHILD";
     static final String ACTION_RESUME_PARENT = "com.example.babymonitor.RESUME_PARENT";
+    static final String ACTION_ROOT_RESUME_BABY = "com.example.babymonitor.ROOT_RESUME_CHILD";
+    static final String ACTION_ROOT_RESUME_PARENT = "com.example.babymonitor.ROOT_RESUME_PARENT";
 
     private static final String CHANNEL_ID = "argus_resume_v2";
     private static final int NOTIFICATION_ID = 1077;
@@ -25,14 +28,42 @@ public class BootReceiver extends BroadcastReceiver {
                 || Intent.ACTION_MY_PACKAGE_REPLACED.equals(action);
         if (!restartEvent) return;
 
-        String mode = AppPrefs.mode(context);
+        Context appContext = context.getApplicationContext();
+        UserManager userManager = (UserManager) appContext.getSystemService(Context.USER_SERVICE);
+        if (userManager != null && !userManager.isUserUnlocked()) {
+            // The saved pairing and desired mode live in credential-encrypted
+            // storage. USER_UNLOCKED will arrive after the first unlock.
+            return;
+        }
+
+        String mode = AppPrefs.mode(appContext);
         if (!"baby".equals(mode) && !"parent".equals(mode)) return;
 
-        // Android 10 and older can resume the camera/microphone foreground service
-        // directly from the reboot path. Android 11+ restricts camera/microphone
-        // access when a service is created while the app is backgrounded, so on
-        // current Android versions we preserve the desired mode and provide the
-        // required user-visible resume action instead of starting a broken stream.
+        PendingResult pendingResult = goAsync();
+        new Thread(() -> {
+            try {
+                resumeAfterRestart(appContext, mode);
+            } finally {
+                pendingResult.finish();
+            }
+        }, "ArgusBootResume").start();
+    }
+
+    private void resumeAfterRestart(Context context, String mode) {
+        // Rooted path: if su has already been granted to ARGUS, use it to launch
+        // ARGUS after unlock. Starting the ordinary foreground service from the
+        // foreground Activity avoids modern Android's background camera/mic start
+        // restriction without changing the normal non-root behavior.
+        String rootAction = "baby".equals(mode)
+                ? ACTION_ROOT_RESUME_BABY
+                : ACTION_ROOT_RESUME_PARENT;
+        if (RootSupport.tryLaunchResumeActivity(context, rootAction)) {
+            cancelResumeNotification(context);
+            return;
+        }
+
+        // Non-rooted compatibility path. Android 10 and older can resume the
+        // camera/microphone foreground service directly from reboot.
         if ("baby".equals(mode) && Build.VERSION.SDK_INT < 30) {
             if (tryStart(context, SenderService.class)) {
                 cancelResumeNotification(context);
@@ -40,9 +71,8 @@ public class BootReceiver extends BroadcastReceiver {
             }
         }
 
-        // Parent listening has no while-in-use camera/microphone permission, so it
-        // can still auto-resume from boot through Android 14. Android 15 blocks
-        // BOOT_COMPLETED from launching mediaPlayback foreground services.
+        // Parent listening does not require while-in-use camera/microphone access,
+        // so normal boot auto-resume remains possible through Android 14.
         if ("parent".equals(mode) && Build.VERSION.SDK_INT < 35) {
             if (tryStart(context, ReceiverService.class)) {
                 cancelResumeNotification(context);
@@ -50,6 +80,8 @@ public class BootReceiver extends BroadcastReceiver {
             }
         }
 
+        // Current non-root Android requires user interaction before a background
+        // app can start camera/microphone capture after reboot.
         postResumeNotification(context, mode);
     }
 
