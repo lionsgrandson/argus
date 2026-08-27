@@ -1,12 +1,12 @@
-# Baby Monitor Android — Secure Camera + Audio v2.6
+# ARGUS Android — Secure Camera + Audio
 
-This repository contains the Android app and encrypted internet relay for the Baby Monitor project.
+This repository contains the ARGUS Android app and encrypted internet relay.
 
 ## What it does
 
-- One APK with **Baby phone** and **Parent phone** modes.
-- Live baby-room **camera + audio** over the internet.
-- Baby phone keeps the camera and microphone foreground service running while its display is locked/off.
+- One APK with **Child phone** and **Parent phone** modes.
+- Live Child-phone **camera + audio** over the internet.
+- Child phone keeps the camera and microphone foreground service running while its display is locked/off.
 - Parent phone shows the live camera feed and plays the live audio.
 - End-to-end AES-256-GCM encryption for audio, camera and status packets.
 - TLS-validated `wss://` transport.
@@ -15,76 +15,76 @@ This repository contains the Android app and encrypted internet relay for the Ba
 - No recordings or media database; live frames are kept in memory only.
 - Automatic reconnect.
 - Parent connection-loss alarm after previously-live audio disappears for about 8 seconds.
-- Remote baby-phone battery/charging status and low-battery warning.
-- Conservative camera mode is used initially to reduce battery/data use and remain compatible with the older deployed relay bandwidth limits.
+- Remote Child-phone battery/charging status and low-battery warning.
+- Sticky foreground services, wake/Wi-Fi locks, and `stopWithTask=false` keep ARGUS running when the app UI is closed or the screen is locked.
 
-The configured relay is baked into the app:
+The currently deployed relay is baked into the app:
 
 `wss://baby-monitor-secure-relay.mosheschwartzberg.workers.dev/ws`
 
 ## First use
 
-### Baby phone
+### Child phone
 
-1. Install the APK and open **Baby Monitor**.
-2. Select **Baby phone**.
-3. Tap **New code** if there is no pairing code yet, then **Copy code**.
-4. Tap **Start baby monitor**.
-5. Grant **camera** and **microphone** permission when Android asks.
-6. Plug the phone into power and lock the screen.
-
-Android will keep a foreground-service notification visible while the camera/microphone service is active. After a full phone reboot, Android requires a user-visible resume flow before camera/microphone monitoring can restart.
+1. Install the APK and open **ARGUS**.
+2. Select **THIS IS THE CHILD PHONE**.
+3. Grant camera and microphone permission when Android asks.
+4. ARGUS creates the secure pairing QR automatically and starts transmitting.
+5. Plug the phone into power for long sessions and lock the screen if desired.
 
 ### Parent phone
 
 1. Install the same APK.
-2. Select **Parent phone**.
-3. Paste the Baby phone pairing code.
-4. Tap **Start watching**.
-5. The live camera appears at the top while the encrypted audio plays.
+2. Select **THIS IS THE PARENT PHONE**.
+3. Tap **SCAN CHILD QR** and scan the QR shown on the Child phone.
+4. ARGUS stores the pairing securely and starts watching automatically.
 
-Treat the pairing code like a password. If it leaks, create a new code on the Baby phone.
+Treat the pairing QR/link like a password. If it leaks, create a new pairing QR on the Child phone.
+
+## Background and reboot behavior
+
+While Child transmission is active, ARGUS runs as a sticky foreground camera/microphone service with wake and high-performance Wi-Fi locks. Closing the app UI or locking the screen does not intentionally stop transmission.
+
+ARGUS remembers the active role across reboots and listens for boot, user-unlock, and app-update events. On Android versions that permit it, the service resumes automatically. Current Android privacy rules do not allow apps targeting modern SDKs to silently create a camera/microphone foreground service from the background after reboot. On those Android versions, ARGUS shows a high-priority **Resume ARGUS** notification; tapping it opens ARGUS and immediately resumes the previously active mode without requiring setup again.
+
+For maximum reliability, open **Advanced settings → Background battery settings** and set ARGUS to the least restrictive battery mode offered by the phone manufacturer.
 
 ## Simplified interface
 
-The main screen now only shows the controls needed for the selected role. Relay configuration and Android app settings are hidden under **Advanced settings**.
+The main screen only shows the controls needed for the selected role. Relay configuration, battery/background settings, and Android app settings are under **Advanced settings**.
 
 ## Build
 
-GitHub Actions builds the debug APK on pushes to `main` and on pull requests. The project uses:
+The project uses:
 
-- JDK 17 for the build runner.
-- Android SDK 35 / Build Tools 35.0.0.
-- Gradle 8.11.1.
-- Android Gradle Plugin 8.9.2.
+- Android SDK 35.
 - minSdk 26, target/compileSdk 35.
 - Java 11 source compatibility.
+- Local Windows build helper: `buildapp.cmd`.
 
-The existing Windows build helpers can also be used when present in a local copy of the project.
+Run `buildapp.cmd` from the repository root to build locally without consuming GitHub Actions minutes.
 
 ## Relay
 
 `relay-cloudflare/` contains the Cloudflare Worker/Durable Object relay source. The relay never receives the AES encryption key; it forwards ciphertext and can observe ordinary network metadata such as connection times and traffic volume.
 
-The camera build remains deliberately low-bandwidth enough to work with the earlier deployed relay limits. The updated Worker source also includes larger guarded limits for future higher-quality camera modes.
-
 ## Reliability
 
-For the Baby phone:
+For the Child phone:
 
-- Keep it plugged in for long monitoring sessions.
+- Keep it plugged in for long sessions.
 - Set the app battery mode to Unrestricted/Not optimized if the manufacturer provides that option.
-- Test camera + audio with the display locked on the exact phone model before relying on it overnight.
+- Test camera + audio with the display locked on the exact phone model.
+- Reboot the phone once during testing and verify the Android-version-specific resume behavior.
 - Test a disconnect so you know the Parent alarm behaves as expected.
-
-This is a personal monitoring project, not a certified medical/safety device and not a replacement for normal child-safety precautions.
 
 ## Important files
 
-- `app/src/main/java/com/example/babymonitor/MainActivity.java` — simplified UI.
-- `app/src/main/java/com/example/babymonitor/SenderService.java` — Baby foreground sender.
+- `app/src/main/java/com/example/babymonitor/MainActivity.java` — simplified Parent/Child UI.
+- `app/src/main/java/com/example/babymonitor/SenderService.java` — Child foreground sender.
 - `app/src/main/java/com/example/babymonitor/CameraStreamer.java` — screen-off Camera2 capture.
 - `app/src/main/java/com/example/babymonitor/ReceiverService.java` — Parent audio/video receiver.
+- `app/src/main/java/com/example/babymonitor/BootReceiver.java` — reboot/update resume handling.
 - `app/src/main/java/com/example/babymonitor/PacketCodec.java` — encrypted packet protocol.
 - `relay-cloudflare/` — Cloudflare relay source.
 - `SECURITY.md` — security model.
