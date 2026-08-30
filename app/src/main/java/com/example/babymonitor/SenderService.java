@@ -237,7 +237,9 @@ public class SenderService extends Service {
                 .setContentText("Background service running")
                 .setCategory(Notification.CATEGORY_SERVICE)
                 .setPriority(Notification.PRIORITY_LOW)
-                .setSilent(true)
+                .setSound(null)
+                .setVibrate(null)
+                .setDefaults(0)
                 .setOngoing(true).setOnlyAlertOnce(true).setContentIntent(content)
                 .addAction(new Notification.Action.Builder(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPi).build())
                 .build();
