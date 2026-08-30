@@ -235,6 +235,9 @@ public class SenderService extends Service {
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
                 .setContentTitle("ARGUS — Child phone")
                 .setContentText(text)
+                .setCategory(Notification.CATEGORY_SERVICE)
+                .setPriority(Notification.PRIORITY_LOW)
+                .setSilent(true)
                 .setOngoing(true).setOnlyAlertOnce(true).setContentIntent(content)
                 .addAction(new Notification.Action.Builder(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPi).build())
                 .build();
@@ -248,6 +251,9 @@ public class SenderService extends Service {
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         NotificationChannel c = new NotificationChannel("argus_sender", "ARGUS camera and microphone", NotificationManager.IMPORTANCE_LOW);
         c.setDescription("Required while ARGUS is transmitting camera and microphone");
+        c.setSound(null, null);
+        c.enableVibration(false);
+        c.setShowBadge(false);
         nm.createNotificationChannel(c);
     }
 
