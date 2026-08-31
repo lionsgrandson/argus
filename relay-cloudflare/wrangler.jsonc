@@ -3,6 +3,10 @@
   "name": "baby-monitor-secure-relay",
   "main": "src/index.js",
   "compatibility_date": "2026-08-23",
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
   "durable_objects": {
     "bindings": [
       {
