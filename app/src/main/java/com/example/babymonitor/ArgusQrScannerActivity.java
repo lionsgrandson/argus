@@ -28,7 +28,7 @@ public class ArgusQrScannerActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
         barcodeView = new DecoratedBarcodeView(this);
-        barcodeView.setStatusText("Scan the QR shown on the Child phone");
+        barcodeView.setStatusText("סרקו את קוד ה QR שמופיע בטלפון הילד");
         setContentView(barcodeView);
 
         if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
@@ -101,7 +101,7 @@ public class ArgusQrScannerActivity extends Activity {
             GmsBarcodeScanner.deliverFailure(
                     new SecurityException("Camera permission was not granted")
             );
-            Toast.makeText(this, "Camera permission is needed to scan the QR", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "נדרשת הרשאת מצלמה כדי לסרוק את קוד ה QR", Toast.LENGTH_LONG).show();
             finish();
         }
     }
