@@ -34,6 +34,61 @@ final class AppPrefs {
         catch (Exception e) { return null; }
     }
 
+    static void clearPairing(Context c) {
+        prefs(c).edit()
+                .remove("pairing_protected")
+                .putBoolean("pair_confirmed", false)
+                .putBoolean("baby_peer_online", false)
+                .putBoolean("parent_peer_online", false)
+                .apply();
+    }
+
+    static void setPairConfirmed(Context c, boolean confirmed) {
+        prefs(c).edit().putBoolean("pair_confirmed", confirmed).apply();
+    }
+
+    static boolean pairConfirmed(Context c) {
+        return prefs(c).getBoolean("pair_confirmed", false);
+    }
+
+    static void setPeerOnline(Context c, String role, boolean online) {
+        prefs(c).edit().putBoolean(role + "_peer_online", online).apply();
+    }
+
+    static boolean peerOnline(Context c, String role) {
+        return prefs(c).getBoolean(role + "_peer_online", false);
+    }
+
+    static void setParentMedia(Context c, boolean camera, boolean mic) {
+        prefs(c).edit()
+                .putBoolean("parent_camera_enabled", camera)
+                .putBoolean("parent_mic_enabled", mic)
+                .apply();
+    }
+
+    static boolean parentCameraEnabled(Context c) {
+        return prefs(c).getBoolean("parent_camera_enabled", true);
+    }
+
+    static boolean parentMicEnabled(Context c) {
+        return prefs(c).getBoolean("parent_mic_enabled", true);
+    }
+
+    static void setChildMedia(Context c, boolean camera, boolean mic) {
+        prefs(c).edit()
+                .putBoolean("child_camera_enabled", camera)
+                .putBoolean("child_mic_enabled", mic)
+                .apply();
+    }
+
+    static boolean childCameraEnabled(Context c) {
+        return prefs(c).getBoolean("child_camera_enabled", true);
+    }
+
+    static boolean childMicEnabled(Context c) {
+        return prefs(c).getBoolean("child_mic_enabled", true);
+    }
+
     static void setMode(Context c, String mode) { prefs(c).edit().putString("desired_mode", mode).apply(); }
     static String mode(Context c) { return prefs(c).getString("desired_mode", "none"); }
 
