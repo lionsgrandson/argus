@@ -10,7 +10,6 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.os.*;
 import android.provider.Settings;
-import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.*;
@@ -24,26 +23,29 @@ import com.google.zxing.common.BitMatrix;
 import com.google.zxing.qrcode.QRCodeWriter;
 
 public class MainActivity extends Activity {
-    private static final int REQ_BABY_PERMS = 100;
+    private static final int REQ_CHILD_PERMS = 100;
     private static final int REQ_NOTIF = 101;
     private static final String ROLE_PREF = "setup_role";
 
-    private EditText relayUrl;
-    private EditText manualPairingCode;
-    private TextView babyState;
-    private TextView parentState;
-    private TextView batteryState;
-    private TextView videoState;
-    private TextView parentPairingState;
-    private ImageView videoView;
-    private ImageView pairingQrView;
     private LinearLayout roleChooser;
-    private LinearLayout babyPanel;
-    private LinearLayout parentPanel;
-    private LinearLayout advancedPanel;
-    private LinearLayout commonControls;
+    private LinearLayout setupPanel;
+    private LinearLayout pairingControls;
+    private LinearLayout permissionList;
+    private LinearLayout livePanel;
+    private TextView setupRoleTitle;
+    private TextView setupStatus;
+    private TextView liveConnection;
+    private TextView liveMainText;
+    private TextView batteryState;
+    private TextView audioOnlyState;
+    private ImageView pairingQrView;
+    private ImageView videoView;
+    private Switch cameraSwitch;
+    private Switch micSwitch;
+    private Button liveStartStop;
     private long displayedVideoAt = 0L;
     private boolean scanInProgress = false;
+    private boolean updatingSwitches = false;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable refreshTask = new Runnable() {
@@ -56,39 +58,28 @@ public class MainActivity extends Activity {
     @Override public void onCreate(Bundle b) {
         super.onCreate(b);
         buildUi();
-
-        if (Build.VERSION.SDK_INT >= 33
-                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIF);
-        }
-
         handlePairingIntent(getIntent());
     }
 
     @Override protected void onResume() {
         super.onResume();
-
-        if (relayUrl != null) relayUrl.setText(AppPrefs.relay(this));
-
-        String selectedRole = AppPrefs.prefs(this).getString(ROLE_PREF, "");
-        if ("baby".equals(selectedRole) || "parent".equals(selectedRole)) {
-            showRole(selectedRole);
-        } else {
-            showRoleChoice();
+        String role = selectedRole();
+        if ("parent".equals(role) && AppPrefs.pairing(this) != null) {
+            AppPrefs.setPairConfirmed(this, true);
         }
-
+        showCurrentScreen();
         handler.removeCallbacks(refreshTask);
         handler.post(refreshTask);
 
         String action = getIntent() == null ? null : getIntent().getAction();
         if (BootReceiver.ACTION_RESUME_BABY.equals(action)) {
             getIntent().setAction(null);
-            selectRole("baby", false);
-            handler.postDelayed(this::startBaby, 400);
+            AppPrefs.prefs(this).edit().putString(ROLE_PREF, "baby").apply();
+            showCurrentScreen();
         } else if (BootReceiver.ACTION_RESUME_PARENT.equals(action)) {
             getIntent().setAction(null);
-            selectRole("parent", false);
-            handler.postDelayed(this::startParent, 400);
+            AppPrefs.prefs(this).edit().putString(ROLE_PREF, "parent").apply();
+            showCurrentScreen();
         }
 
         handlePairingIntent(getIntent());
@@ -110,267 +101,282 @@ public class MainActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(20), dp(18), dp(20), dp(28));
-        root.setBackgroundColor(Color.rgb(247, 248, 250));
+        root.setBackgroundColor(Color.WHITE);
         scroll.addView(root);
 
-        ImageView brandLogo = new ImageView(this);
-        brandLogo.setImageResource(R.drawable.argus_icon);
-        brandLogo.setAdjustViewBounds(true);
-        brandLogo.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        brandLogo.setContentDescription("ARGUS logo");
-        LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(150)
-        );
-        logoParams.setMargins(0, 0, 0, dp(2));
-        root.addView(brandLogo, logoParams);
+        ImageView logo = new ImageView(this);
+        logo.setImageResource(R.drawable.argus_icon);
+        logo.setAdjustViewBounds(true);
+        logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        root.addView(logo, height(dp(110)));
 
-        TextView subtitle = text("Private live audio + camera", 14, Color.rgb(100, 106, 116), Gravity.CENTER);
-        root.addView(subtitle, spaced(0, 0, 0, dp(18)));
+        TextView title = text("ARGUS", 26, Color.rgb(25, 29, 36), Gravity.CENTER);
+        title.setTypeface(null, android.graphics.Typeface.BOLD);
+        root.addView(title, spaced(0, 0, 0, dp(18)));
 
+        buildRoleChooser(root);
+        buildSetupPanel(root);
+        buildLivePanel(root);
+
+        setContentView(scroll);
+        showCurrentScreen();
+    }
+
+    private void buildRoleChooser(LinearLayout root) {
         roleChooser = panel();
-        TextView chooseTitle = text("Which phone is this?", 24, Color.rgb(28, 32, 39), Gravity.CENTER);
-        chooseTitle.setTypeface(null, android.graphics.Typeface.BOLD);
-        roleChooser.addView(chooseTitle, spaced(0, 0, 0, dp(8)));
+        TextView question = text("Which phone is this?", 22, Color.rgb(28, 32, 39), Gravity.CENTER);
+        question.setTypeface(null, android.graphics.Typeface.BOLD);
+        roleChooser.addView(question, spaced(0, 0, 0, dp(18)));
 
-        roleChooser.addView(text(
-                "Choose once. ARGUS will remember this phone.",
-                15, Color.rgb(91, 97, 107), Gravity.CENTER
-        ), spaced(0, 0, 0, dp(20)));
+        Button parent = primaryButton("PARENT PHONE");
+        parent.setOnClickListener(v -> selectRole("parent"));
+        roleChooser.addView(parent, height(dp(64)));
 
-        Button childChoice = primaryButton("THIS IS THE CHILD PHONE");
-        childChoice.setOnClickListener(v -> selectRole("baby", true));
-        roleChooser.addView(childChoice,
-                new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(64)));
-
-        Button parentChoice = primaryButton("THIS IS THE PARENT PHONE");
-        parentChoice.setOnClickListener(v -> selectRole("parent", true));
-        roleChooser.addView(parentChoice, spacedHeight(dp(10), dp(64)));
+        Button child = primaryButton("CHILD PHONE");
+        child.setOnClickListener(v -> selectRole("baby"));
+        roleChooser.addView(child, spacedHeight(dp(10), dp(64)));
 
         root.addView(roleChooser, matchWrap());
+    }
 
-        babyPanel = panel();
-        TextView childRole = roleLabel("CHILD PHONE");
-        babyPanel.addView(childRole, spaced(0, 0, 0, dp(8)));
+    private void buildSetupPanel(LinearLayout root) {
+        setupPanel = panel();
+        setupRoleTitle = heading("SETUP");
+        setupPanel.addView(setupRoleTitle, spaced(0, 0, 0, dp(8)));
 
-        babyPanel.addView(heading("Leave this phone near the child"), matchWrap());
-        babyPanel.addView(text(
-                "Camera and microphone stay active while the screen is locked.",
-                14, Color.rgb(92, 99, 109), Gravity.START
-        ), spaced(0, dp(4), 0, dp(4)));
-        babyPanel.addView(text(
-                "ARGUS keeps transmitting in the background until you stop it.",
-                13, Color.rgb(92, 99, 109), Gravity.START
-        ), spaced(0, 0, 0, dp(12)));
+        setupStatus = text("Not paired", 15, Color.rgb(170, 50, 50), Gravity.CENTER);
+        setupStatus.setTypeface(null, android.graphics.Typeface.BOLD);
+        setupPanel.addView(setupStatus, spaced(0, 0, 0, dp(16)));
 
-        babyState = statusText("Stopped");
-        babyPanel.addView(babyState, spaced(0, 0, 0, dp(14)));
+        pairingControls = new LinearLayout(this);
+        pairingControls.setOrientation(LinearLayout.VERTICAL);
+        setupPanel.addView(pairingControls, matchWrap());
 
-        Button startBaby = primaryButton("START TRANSMITTING");
-        startBaby.setOnClickListener(v -> startBaby());
-        babyPanel.addView(startBaby,
-                new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(58)));
-
-        babyPanel.addView(sectionTitle("Connect the Parent phone"), spaced(0, dp(22), 0, dp(6)));
-        babyPanel.addView(text(
-                "Scan the QR on the Parent phone. If QR does not work, copy or share the pairing code instead.",
-                14, Color.rgb(92, 99, 109), Gravity.START
-        ), spaced(0, 0, 0, dp(12)));
-
-        pairingQrView = new ImageView(this);
-        pairingQrView.setAdjustViewBounds(true);
-        pairingQrView.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        pairingQrView.setBackgroundColor(Color.WHITE);
-        pairingQrView.setContentDescription("ARGUS secure pairing QR");
-        LinearLayout.LayoutParams qrP = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(250));
-        babyPanel.addView(pairingQrView, qrP);
-
-        TextView qrHint = text(
-                "QR is fastest. Pairing code works on every phone.",
-                13, Color.rgb(97, 104, 114), Gravity.CENTER
-        );
-        babyPanel.addView(qrHint, spaced(0, dp(8), 0, dp(10)));
-
-        Button copyCode = primaryButton("COPY PAIRING CODE");
-        copyCode.setOnClickListener(v -> copyPairingCode());
-        babyPanel.addView(copyCode,
-                new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(54)));
-
-        Button shareLink = button("Share pairing code");
-        shareLink.setOnClickListener(v -> sharePairingLink());
-        babyPanel.addView(shareLink, spacedHeight(dp(8), dp(50)));
-
-        root.addView(babyPanel, matchWrap());
-
-        parentPanel = panel();
-        parentPanel.addView(roleLabel("PARENT PHONE"), spaced(0, 0, 0, dp(8)));
-        parentPanel.addView(heading("Watch the Child phone"), matchWrap());
-
-        parentPairingState = text(
-                "Not connected yet",
-                14, Color.rgb(92, 99, 109), Gravity.START
-        );
-        parentPanel.addView(parentPairingState, spaced(0, dp(4), 0, dp(12)));
-
-        Button scanQr = primaryButton("SCAN CHILD QR");
-        scanQr.setOnClickListener(v -> scanPairingQr());
-        parentPanel.addView(scanQr,
-                new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(58)));
-
-        parentPanel.addView(text(
-                "Point the camera at the QR shown on the Child phone.",
-                13, Color.rgb(97, 104, 114), Gravity.START
-        ), spaced(0, dp(8), 0, dp(14)));
-
-        parentPanel.addView(sectionTitle("QR not working?"), spaced(0, dp(4), 0, dp(4)));
-        parentPanel.addView(text(
-                "On the Child phone tap Copy pairing code or Share pairing code, then paste the code here.",
-                13, Color.rgb(97, 104, 114), Gravity.START
-        ), spaced(0, 0, 0, dp(8)));
-
-        manualPairingCode = new EditText(this);
-        manualPairingCode.setHint("Paste pairing code here");
-        manualPairingCode.setTextSize(14);
-        manualPairingCode.setSingleLine(false);
-        manualPairingCode.setMaxLines(4);
-        manualPairingCode.setInputType(
-                InputType.TYPE_CLASS_TEXT
-                        | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-                        | InputType.TYPE_TEXT_FLAG_MULTI_LINE
-        );
-        parentPanel.addView(manualPairingCode, spaced(0, 0, 0, dp(8)));
-
-        Button connectCode = primaryButton("CONNECT WITH CODE");
-        connectCode.setOnClickListener(v -> connectManualCode());
-        parentPanel.addView(connectCode,
-                new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(54)));
-
-        videoView = new ImageView(this);
-        videoView.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        videoView.setBackgroundColor(Color.rgb(225, 228, 233));
-        videoView.setContentDescription("Live child-room camera");
-        parentPanel.addView(videoView, spacedHeight(dp(16), dp(240)));
-
-        videoState = text("Waiting for camera…", 13, Color.rgb(92, 99, 109), Gravity.CENTER);
-        parentPanel.addView(videoState, spaced(0, dp(8), 0, dp(10)));
-
-        parentState = statusText("Stopped");
-        parentPanel.addView(parentState, spaced(0, 0, 0, dp(10)));
-
-        batteryState = text("Child battery: —", 19, Color.rgb(37, 72, 60), Gravity.CENTER);
-        batteryState.setTypeface(null, android.graphics.Typeface.BOLD);
-        batteryState.setPadding(dp(12), dp(14), dp(12), dp(14));
-        batteryState.setBackgroundColor(Color.WHITE);
-        parentPanel.addView(batteryState, spaced(0, 0, 0, dp(12)));
-
-        Button startParent = button("Start watching");
-        startParent.setOnClickListener(v -> startParent());
-        parentPanel.addView(startParent,
-                new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(48)));
-
-        root.addView(parentPanel, matchWrap());
-
-        commonControls = new LinearLayout(this);
-        commonControls.setOrientation(LinearLayout.VERTICAL);
-
-        Button stop = button("Stop ARGUS");
-        stop.setOnClickListener(v -> stopEverything());
-        commonControls.addView(stop, spaced(0, dp(14), 0, dp(6)));
+        setupPanel.addView(sectionTitle("Permissions"), spaced(0, dp(20), 0, dp(8)));
+        permissionList = new LinearLayout(this);
+        permissionList.setOrientation(LinearLayout.VERTICAL);
+        setupPanel.addView(permissionList, matchWrap());
 
         Button changeRole = button("Change phone type");
         changeRole.setOnClickListener(v -> changePhoneRole());
-        commonControls.addView(changeRole, matchWrap());
+        setupPanel.addView(changeRole, spaced(0, dp(20), 0, 0));
 
-        Button advanced = button("Advanced settings");
-        commonControls.addView(advanced, spaced(0, dp(6), 0, 0));
-
-        advancedPanel = panel();
-        advancedPanel.setVisibility(View.GONE);
-
-        relayUrl = new EditText(this);
-        relayUrl.setHint("wss://relay.example/ws");
-        relayUrl.setSingleLine(true);
-        relayUrl.setTextSize(14);
-        relayUrl.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        relayUrl.setText(AppPrefs.relay(this));
-
-        advancedPanel.addView(text(
-                "Secure relay",
-                14, Color.rgb(55, 60, 69), Gravity.START
-        ), spaced(0, 0, 0, dp(4)));
-        advancedPanel.addView(relayUrl, spaced(0, 0, 0, dp(8)));
-
-        Button rotatePairing = button("Create a new pairing QR");
-        rotatePairing.setOnClickListener(v -> rotatePairing());
-        advancedPanel.addView(rotatePairing, spaced(0, 0, 0, dp(6)));
-
-        Button backgroundBtn = button("Background battery settings");
-        backgroundBtn.setOnClickListener(v -> openBackgroundSettings());
-        advancedPanel.addView(backgroundBtn, spaced(0, 0, 0, dp(6)));
-
-        Button settingsBtn = button("Android app settings");
-        settingsBtn.setOnClickListener(v -> openAppSettings());
-        advancedPanel.addView(settingsBtn, matchWrap());
-
-        commonControls.addView(advancedPanel, spaced(0, dp(8), 0, 0));
-        advanced.setOnClickListener(v -> advancedPanel.setVisibility(
-                advancedPanel.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE));
-
-        root.addView(commonControls, matchWrap());
-
-        TextView footer = text(
-                "End-to-end encrypted • no recordings",
-                12, Color.rgb(125, 131, 140), Gravity.CENTER
-        );
-        root.addView(footer, spaced(0, dp(18), 0, 0));
-
-        setContentView(scroll);
-        showRoleChoice();
+        root.addView(setupPanel, matchWrap());
     }
 
-    private void showRoleChoice() {
-        roleChooser.setVisibility(View.VISIBLE);
-        babyPanel.setVisibility(View.GONE);
-        parentPanel.setVisibility(View.GONE);
-        commonControls.setVisibility(View.GONE);
-        advancedPanel.setVisibility(View.GONE);
+    private void buildLivePanel(LinearLayout root) {
+        livePanel = new LinearLayout(this);
+        livePanel.setOrientation(LinearLayout.VERTICAL);
+        livePanel.setPadding(dp(8), dp(8), dp(8), dp(12));
+        livePanel.setBackgroundColor(Color.WHITE);
+
+        liveConnection = text("NOT CONNECTED", 16, Color.WHITE, Gravity.CENTER);
+        liveConnection.setTypeface(null, android.graphics.Typeface.BOLD);
+        liveConnection.setPadding(dp(12), dp(10), dp(12), dp(10));
+        livePanel.addView(liveConnection, spaced(0, 0, 0, dp(18)));
+
+        liveMainText = text("TRANSMITTING", 28, Color.rgb(28, 32, 39), Gravity.CENTER);
+        liveMainText.setTypeface(null, android.graphics.Typeface.BOLD);
+        livePanel.addView(liveMainText, spaced(0, dp(12), 0, dp(20)));
+
+        LinearLayout mediaControls = new LinearLayout(this);
+        mediaControls.setOrientation(LinearLayout.VERTICAL);
+        mediaControls.setPadding(dp(12), dp(12), dp(12), dp(12));
+        mediaControls.setBackgroundColor(Color.rgb(245, 246, 248));
+
+        cameraSwitch = new Switch(this);
+        cameraSwitch.setText("Transmit camera");
+        cameraSwitch.setTextSize(17);
+        mediaControls.addView(cameraSwitch, matchWrap());
+
+        micSwitch = new Switch(this);
+        micSwitch.setText("Transmit microphone");
+        micSwitch.setTextSize(17);
+        mediaControls.addView(micSwitch, spaced(0, dp(8), 0, 0));
+
+        cameraSwitch.setOnCheckedChangeListener((buttonView, checked) -> {
+            if (!updatingSwitches) updateParentMedia();
+        });
+        micSwitch.setOnCheckedChangeListener((buttonView, checked) -> {
+            if (!updatingSwitches) updateParentMedia();
+        });
+
+        livePanel.addView(mediaControls, spaced(0, 0, 0, dp(14)));
+
+        videoView = new ImageView(this);
+        videoView.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        videoView.setBackgroundColor(Color.rgb(230, 232, 235));
+        videoView.setContentDescription("Live Child phone camera");
+        livePanel.addView(videoView, height(dp(340)));
+
+        audioOnlyState = text("AUDIO LIVE", 24, Color.rgb(35, 90, 67), Gravity.CENTER);
+        audioOnlyState.setTypeface(null, android.graphics.Typeface.BOLD);
+        audioOnlyState.setPadding(dp(12), dp(90), dp(12), dp(90));
+        audioOnlyState.setBackgroundColor(Color.rgb(246, 247, 249));
+        livePanel.addView(audioOnlyState, matchWrap());
+
+        batteryState = text("Child battery: --", 19, Color.rgb(37, 72, 60), Gravity.CENTER);
+        batteryState.setTypeface(null, android.graphics.Typeface.BOLD);
+        batteryState.setPadding(dp(12), dp(14), dp(12), dp(14));
+        livePanel.addView(batteryState, spaced(0, dp(12), 0, dp(12)));
+
+        liveStartStop = primaryButton("STOP");
+        liveStartStop.setOnClickListener(v -> toggleLive());
+        livePanel.addView(liveStartStop, height(dp(58)));
+
+        Button changeRole = button("Change phone type");
+        changeRole.setOnClickListener(v -> changePhoneRole());
+        livePanel.addView(changeRole, spaced(0, dp(12), 0, 0));
+
+        root.addView(livePanel, matchWrap());
     }
 
-    private void selectRole(String role, boolean startImmediately) {
+    private void selectRole(String role) {
         AppPrefs.prefs(this).edit().putString(ROLE_PREF, role).apply();
-        showRole(role);
-
-        if (!startImmediately) return;
+        AppPrefs.setPairConfirmed(this, false);
+        AppPrefs.setPeerOnline(this, "baby", false);
+        AppPrefs.setPeerOnline(this, "parent", false);
 
         if ("baby".equals(role)) {
-            handler.postDelayed(this::startBaby, 150);
-        } else if (AppPrefs.pairing(this) != null) {
-            handler.postDelayed(this::startParent, 150);
+            ensurePairing();
+            showCurrentScreen();
+            handler.postDelayed(this::startBaby, 250);
+        } else {
+            showCurrentScreen();
         }
     }
 
-    private void showRole(String role) {
-        boolean baby = "baby".equals(role);
-        roleChooser.setVisibility(View.GONE);
-        babyPanel.setVisibility(baby ? View.VISIBLE : View.GONE);
-        parentPanel.setVisibility(baby ? View.GONE : View.VISIBLE);
-        commonControls.setVisibility(View.VISIBLE);
+    private String selectedRole() {
+        return AppPrefs.prefs(this).getString(ROLE_PREF, "");
+    }
 
-        if (baby) renderPairingQr();
-        refreshState();
+    private void showCurrentScreen() {
+        String role = selectedRole();
+        if (!"baby".equals(role) && !"parent".equals(role)) {
+            roleChooser.setVisibility(View.VISIBLE);
+            setupPanel.setVisibility(View.GONE);
+            livePanel.setVisibility(View.GONE);
+            return;
+        }
+
+        roleChooser.setVisibility(View.GONE);
+        boolean paired = isPairedForUi(role);
+        setupPanel.setVisibility(paired ? View.GONE : View.VISIBLE);
+        livePanel.setVisibility(paired ? View.VISIBLE : View.GONE);
+
+        if (!paired) renderSetup(role);
+        else renderLive(role);
+    }
+
+    private boolean isPairedForUi(String role) {
+        if ("parent".equals(role)) return AppPrefs.pairing(this) != null;
+        return AppPrefs.pairing(this) != null && AppPrefs.pairConfirmed(this);
+    }
+
+    private void renderSetup(String role) {
+        boolean child = "baby".equals(role);
+        setupRoleTitle.setText(child ? "CHILD PHONE" : "PARENT PHONE");
+        setupStatus.setText(child ? "WAITING FOR PARENT" : "NOT PAIRED");
+        setupStatus.setTextColor(Color.rgb(170, 50, 50));
+
+        pairingControls.removeAllViews();
+        if (child) {
+            pairingControls.addView(text("Scan this QR on the Parent phone", 16,
+                    Color.rgb(55, 60, 69), Gravity.CENTER), spaced(0, 0, 0, dp(10)));
+
+            pairingQrView = new ImageView(this);
+            pairingQrView.setAdjustViewBounds(true);
+            pairingQrView.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            pairingQrView.setBackgroundColor(Color.WHITE);
+            pairingQrView.setContentDescription("ARGUS pairing QR");
+            pairingControls.addView(pairingQrView, height(dp(260)));
+            renderPairingQr();
+
+            Button refreshQr = button("Refresh QR code for debugging");
+            refreshQr.setOnClickListener(v -> rotatePairing());
+            pairingControls.addView(refreshQr, spaced(0, dp(10), 0, 0));
+        } else {
+            pairingControls.addView(text("Scan the QR shown on the Child phone", 16,
+                    Color.rgb(55, 60, 69), Gravity.CENTER), spaced(0, 0, 0, dp(12)));
+            Button scan = primaryButton("SCAN QR CODE");
+            scan.setOnClickListener(v -> scanPairingQr());
+            pairingControls.addView(scan, height(dp(60)));
+        }
+
+        renderPermissions(role);
+    }
+
+    private void renderPermissions(String role) {
+        permissionList.removeAllViews();
+        if ("baby".equals(role)) {
+            addPermissionRow("Camera", hasPermission(Manifest.permission.CAMERA),
+                    () -> requestPermissions(new String[]{Manifest.permission.CAMERA}, REQ_CHILD_PERMS));
+            addPermissionRow("Microphone", hasPermission(Manifest.permission.RECORD_AUDIO),
+                    () -> requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQ_CHILD_PERMS));
+        }
+
+        if (Build.VERSION.SDK_INT >= 33) {
+            addPermissionRow("Notifications", hasPermission(Manifest.permission.POST_NOTIFICATIONS),
+                    () -> requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIF));
+        }
+
+        addPermissionRow("Background battery access", batteryAccessActive(), this::openBatterySettings);
+    }
+
+    private void addPermissionRow(String label, boolean active, Runnable action) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(10), dp(8), dp(10), dp(8));
+        row.setBackgroundColor(active ? Color.rgb(235, 247, 239) : Color.rgb(252, 239, 239));
+
+        TextView name = text(label, 15, Color.rgb(38, 42, 49), Gravity.START);
+        LinearLayout.LayoutParams nameParams = new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        row.addView(name, nameParams);
+
+        Button state = button(active ? "ACTIVE" : "ALLOW");
+        state.setEnabled(!active);
+        if (!active) state.setOnClickListener(v -> action.run());
+        row.addView(state, new LinearLayout.LayoutParams(dp(100), dp(44)));
+
+        permissionList.addView(row, spaced(0, 0, 0, dp(8)));
+    }
+
+    private boolean hasPermission(String permission) {
+        return Build.VERSION.SDK_INT < 23 || checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private boolean batteryAccessActive() {
+        if (Build.VERSION.SDK_INT < 23) return true;
+        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+        return pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
+    }
+
+    private void openBatterySettings() {
+        if (Build.VERSION.SDK_INT < 23) return;
+        try {
+            Intent i = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:" + getPackageName()));
+            startActivity(i);
+        } catch (RuntimeException e) {
+            try {
+                startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+            } catch (RuntimeException ignored) {
+                openAppSettings();
+            }
+        }
     }
 
     private PairingConfig ensurePairing() {
         PairingConfig p = AppPrefs.pairing(this);
         if (p != null) return p;
-
         try {
             p = PairingConfig.generate();
             AppPrefs.savePairing(this, p);
             return p;
         } catch (Exception e) {
-            Toast.makeText(this, "Could not create secure pairing", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Could not create pairing QR", Toast.LENGTH_LONG).show();
             return null;
         }
     }
@@ -378,17 +384,12 @@ public class MainActivity extends Activity {
     private void renderPairingQr() {
         if (pairingQrView == null) return;
         PairingConfig p = ensurePairing();
-        if (p == null) {
-            pairingQrView.setImageDrawable(null);
-            return;
-        }
-
+        if (p == null) return;
         try {
             String payload = pairingLink(p);
             int px = 720;
             BitMatrix matrix = new QRCodeWriter().encode(payload, BarcodeFormat.QR_CODE, px, px);
             Bitmap bitmap = Bitmap.createBitmap(px, px, Bitmap.Config.ARGB_8888);
-
             int[] pixels = new int[px * px];
             for (int y = 0; y < px; y++) {
                 int offset = y * px;
@@ -396,12 +397,10 @@ public class MainActivity extends Activity {
                     pixels[offset + x] = matrix.get(x, y) ? Color.BLACK : Color.WHITE;
                 }
             }
-
             bitmap.setPixels(pixels, 0, px, 0, 0, px, px);
             pairingQrView.setImageBitmap(bitmap);
         } catch (Exception e) {
             pairingQrView.setImageDrawable(null);
-            Toast.makeText(this, "Could not create pairing QR", Toast.LENGTH_LONG).show();
         }
     }
 
@@ -410,263 +409,226 @@ public class MainActivity extends Activity {
                 .scheme("argus")
                 .authority("pair")
                 .appendQueryParameter("code", p.encode())
-                .build()
-                .toString();
-    }
-
-    private void copyPairingCode() {
-        PairingConfig p = ensurePairing();
-        if (p == null) return;
-
-        ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-        if (clipboard == null) {
-            Toast.makeText(this, "Could not access clipboard", Toast.LENGTH_LONG).show();
-            return;
-        }
-
-        clipboard.setPrimaryClip(ClipData.newPlainText("ARGUS pairing code", p.encode()));
-        Toast.makeText(this, "Pairing code copied", Toast.LENGTH_SHORT).show();
-    }
-
-    private void sharePairingLink() {
-        PairingConfig p = ensurePairing();
-        if (p == null) return;
-
-        Intent send = new Intent(Intent.ACTION_SEND);
-        send.setType("text/plain");
-        send.putExtra(
-                Intent.EXTRA_TEXT,
-                "ARGUS pairing code:\n" + p.encode()
-                        + "\n\nPaste this code into ARGUS on the Parent phone."
-        );
-        startActivity(Intent.createChooser(send, "Send ARGUS pairing code"));
-    }
-
-    private void connectManualCode() {
-        if (manualPairingCode == null) return;
-
-        String value = manualPairingCode.getText().toString().trim();
-        if (value.isEmpty()) {
-            Toast.makeText(this, "Paste the Child phone pairing code first", Toast.LENGTH_LONG).show();
-            return;
-        }
-
-        acceptPairingPayload(value, true);
-    }
-
-    private void scanPairingQr() {
-        if (scanInProgress) return;
-        scanInProgress = true;
-
-        try {
-            GmsBarcodeScannerOptions options = new GmsBarcodeScannerOptions.Builder()
-                    .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
-                    .enableAutoZoom()
-                    .build();
-            GmsBarcodeScanner scanner = GmsBarcodeScanning.getClient(this, options);
-
-            scanner.startScan()
-                    .addOnSuccessListener(barcode -> {
-                        scanInProgress = false;
-                        String rawValue = barcode.getRawValue();
-                        if (rawValue == null || rawValue.trim().isEmpty()) {
-                            Toast.makeText(this, "No QR data was found", Toast.LENGTH_LONG).show();
-                            return;
-                        }
-                        acceptPairingPayload(rawValue, true);
-                    })
-                    .addOnCanceledListener(() -> scanInProgress = false)
-                    .addOnFailureListener(e -> {
-                        scanInProgress = false;
-                        Toast.makeText(
-                                this,
-                                "Could not open the QR scanner. Use the pairing code below instead.",
-                                Toast.LENGTH_LONG
-                        ).show();
-                    });
-        } catch (RuntimeException e) {
-            scanInProgress = false;
-            Toast.makeText(
-                    this,
-                    "Could not open the QR scanner. Use the pairing code below instead.",
-                    Toast.LENGTH_LONG
-            ).show();
-        }
-    }
-
-    private void handlePairingIntent(Intent intent) {
-        if (intent == null || intent.getData() == null) return;
-
-        Uri data = intent.getData();
-        if (!"argus".equalsIgnoreCase(data.getScheme())
-                || !"pair".equalsIgnoreCase(data.getHost())) {
-            return;
-        }
-
-        String code = data.getQueryParameter("code");
-        if (code == null || code.trim().isEmpty()) return;
-
-        acceptPairingPayload(code, true);
-        intent.setData(null);
-    }
-
-    private void acceptPairingPayload(String payload, boolean autoStart) {
-        String code = payload == null ? "" : payload.trim();
-
-        try {
-            int argusIndex = code.indexOf("argus://");
-            if (argusIndex >= 0) {
-                String link = code.substring(argusIndex).trim();
-                int whitespace = firstWhitespace(link);
-                if (whitespace > 0) link = link.substring(0, whitespace);
-
-                Uri uri = Uri.parse(link);
-                if (!"argus".equalsIgnoreCase(uri.getScheme())
-                        || !"pair".equalsIgnoreCase(uri.getHost())) {
-                    throw new IllegalArgumentException("Wrong ARGUS QR type");
-                }
-                code = uri.getQueryParameter("code");
-            } else {
-                String marker = "ARGUS pairing code:";
-                int markerIndex = code.indexOf(marker);
-                if (markerIndex >= 0) {
-                    code = code.substring(markerIndex + marker.length()).trim();
-                    int whitespace = firstWhitespace(code);
-                    if (whitespace > 0) code = code.substring(0, whitespace);
-                }
-            }
-
-            if (code == null || code.trim().isEmpty()) {
-                throw new IllegalArgumentException("Empty code");
-            }
-
-            PairingConfig p = PairingConfig.parse(code.trim());
-            AppPrefs.savePairing(this, p);
-            AppPrefs.prefs(this).edit().putString(ROLE_PREF, "parent").apply();
-            showRole("parent");
-
-            if (manualPairingCode != null) manualPairingCode.setText("");
-
-            Toast.makeText(this, "Connected to the Child phone", Toast.LENGTH_SHORT).show();
-
-            if (autoStart) handler.postDelayed(this::startParent, 400);
-        } catch (Exception e) {
-            Toast.makeText(this, "That is not a valid ARGUS pairing code", Toast.LENGTH_LONG).show();
-        }
-    }
-
-    private int firstWhitespace(String value) {
-        for (int i = 0; i < value.length(); i++) {
-            if (Character.isWhitespace(value.charAt(i))) return i;
-        }
-        return -1;
+                .build().toString();
     }
 
     private void rotatePairing() {
         try {
             PairingConfig p = PairingConfig.generate();
             AppPrefs.savePairing(this, p);
+            AppPrefs.setPairConfirmed(this, false);
+            AppPrefs.setPeerOnline(this, "baby", false);
+            stopService(new Intent(this, SenderService.class));
+            AppPrefs.setMode(this, "none");
             renderPairingQr();
-            Toast.makeText(this, "New pairing QR created", Toast.LENGTH_SHORT).show();
-
-            if ("baby".equals(AppPrefs.mode(this))) {
-                stopService(new Intent(this, SenderService.class));
-                handler.postDelayed(this::startBaby, 250);
-            }
+            handler.postDelayed(this::startBaby, 250);
+            Toast.makeText(this, "New QR created", Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
-            Toast.makeText(this, "Could not create a new pairing QR", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Could not refresh QR", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void scanPairingQr() {
+        if (scanInProgress) return;
+        scanInProgress = true;
+        try {
+            GmsBarcodeScannerOptions options = new GmsBarcodeScannerOptions.Builder()
+                    .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+                    .enableAutoZoom()
+                    .build();
+            GmsBarcodeScanner scanner = GmsBarcodeScanning.getClient(this, options);
+            scanner.startScan()
+                    .addOnSuccessListener(barcode -> {
+                        scanInProgress = false;
+                        String raw = barcode.getRawValue();
+                        if (raw == null || raw.trim().isEmpty()) {
+                            Toast.makeText(this, "No QR data found", Toast.LENGTH_LONG).show();
+                            return;
+                        }
+                        acceptPairingPayload(raw);
+                    })
+                    .addOnCanceledListener(() -> scanInProgress = false)
+                    .addOnFailureListener(e -> {
+                        scanInProgress = false;
+                        Toast.makeText(this, "Could not scan QR", Toast.LENGTH_LONG).show();
+                    });
+        } catch (RuntimeException e) {
+            scanInProgress = false;
+            Toast.makeText(this, "Could not scan QR", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void handlePairingIntent(Intent intent) {
+        if (intent == null || intent.getData() == null) return;
+        Uri data = intent.getData();
+        if (!"argus".equalsIgnoreCase(data.getScheme()) || !"pair".equalsIgnoreCase(data.getHost())) return;
+        String code = data.getQueryParameter("code");
+        if (code == null || code.trim().isEmpty()) return;
+        acceptPairingPayload(code);
+        intent.setData(null);
+    }
+
+    private void acceptPairingPayload(String payload) {
+        try {
+            String code = payload.trim();
+            if (code.startsWith("argus://")) {
+                Uri uri = Uri.parse(code);
+                code = uri.getQueryParameter("code");
+            }
+            PairingConfig p = PairingConfig.parse(code);
+            AppPrefs.savePairing(this, p);
+            AppPrefs.setPairConfirmed(this, true);
+            AppPrefs.prefs(this).edit().putString(ROLE_PREF, "parent").apply();
+            Toast.makeText(this, "Phones paired", Toast.LENGTH_SHORT).show();
+            startParent();
+            showCurrentScreen();
+        } catch (Exception e) {
+            Toast.makeText(this, "Invalid ARGUS QR", Toast.LENGTH_LONG).show();
         }
     }
 
     private void startBaby() {
-        saveRelay();
-        if (!validRelay()) return;
         if (ensurePairing() == null) return;
-        renderPairingQr();
-
-        boolean mic = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
-        boolean camera = checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
-        if (!mic || !camera) {
-            requestPermissions(
-                    new String[]{Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA},
-                    REQ_BABY_PERMS
-            );
+        boolean camera = hasPermission(Manifest.permission.CAMERA);
+        boolean mic = hasPermission(Manifest.permission.RECORD_AUDIO);
+        if (!camera || !mic) {
+            requestPermissions(new String[]{Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO}, REQ_CHILD_PERMS);
             return;
         }
-
         stopService(new Intent(this, ReceiverService.class));
-        LiveVideoStore.clear();
         AppPrefs.setMode(this, "baby");
         AppPrefs.prefs(this).edit().putString(ROLE_PREF, "baby").apply();
-
         Intent i = new Intent(this, SenderService.class);
         if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
         else startService(i);
-
-        Toast.makeText(
-                this,
-                "ARGUS is transmitting. You can lock this phone.",
-                Toast.LENGTH_LONG
-        ).show();
         refreshState();
     }
 
     private void startParent() {
-        saveRelay();
-        if (!validRelay()) return;
-
-        if (AppPrefs.pairing(this) == null) {
-            Toast.makeText(this, "Scan the Child QR or enter its pairing code first", Toast.LENGTH_LONG).show();
-            return;
-        }
-
+        if (AppPrefs.pairing(this) == null) return;
         stopService(new Intent(this, SenderService.class));
         LiveVideoStore.clear();
         displayedVideoAt = 0L;
         AppPrefs.setMode(this, "parent");
         AppPrefs.prefs(this).edit().putString(ROLE_PREF, "parent").apply();
-
-        try {
-            Intent i = new Intent(this, ReceiverService.class);
-            if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
-            else startService(i);
-            refreshState();
-        } catch (RuntimeException e) {
-            AppPrefs.setMode(this, "none");
-            AppPrefs.state(this, "parent", "Could not start parent listener");
-            Toast.makeText(
-                    this,
-                    "Connected, but Android could not start monitoring. Tap Start watching to retry.",
-                    Toast.LENGTH_LONG
-            ).show();
-            refreshState();
-        }
-    }
-
-    private void saveRelay() {
-        if (relayUrl != null) AppPrefs.saveRelay(this, relayUrl.getText().toString());
-    }
-
-    private boolean validRelay() {
-        String r = AppPrefs.relay(this);
-        if (!r.startsWith("wss://")) {
-            Toast.makeText(this, "Relay URL must start with wss://", Toast.LENGTH_LONG).show();
-            return false;
-        }
-        return true;
-    }
-
-    private void stopEverything() {
-        stopService(new Intent(this, SenderService.class));
-        stopService(new Intent(this, ReceiverService.class));
-        LiveVideoStore.clear();
-        displayedVideoAt = 0L;
-
-        if (videoView != null) videoView.setImageDrawable(null);
-
-        AppPrefs.setMode(this, "none");
-        Toast.makeText(this, "ARGUS stopped", Toast.LENGTH_SHORT).show();
+        Intent i = new Intent(this, ReceiverService.class);
+        if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
+        else startService(i);
         refreshState();
+    }
+
+    private void toggleLive() {
+        String role = selectedRole();
+        if ("baby".equals(role)) {
+            if ("baby".equals(AppPrefs.mode(this))) {
+                stopService(new Intent(this, SenderService.class));
+                AppPrefs.setMode(this, "none");
+                AppPrefs.setPeerOnline(this, "baby", false);
+            } else {
+                startBaby();
+            }
+        } else if ("parent".equals(role)) {
+            if ("parent".equals(AppPrefs.mode(this))) {
+                stopService(new Intent(this, ReceiverService.class));
+                AppPrefs.setMode(this, "none");
+                AppPrefs.setPeerOnline(this, "parent", false);
+            } else {
+                startParent();
+            }
+        }
+        refreshState();
+    }
+
+    private void updateParentMedia() {
+        if (cameraSwitch == null || micSwitch == null) return;
+        boolean camera = cameraSwitch.isChecked();
+        boolean mic = micSwitch.isChecked();
+        AppPrefs.setParentMedia(this, camera, mic);
+        if ("parent".equals(AppPrefs.mode(this))) {
+            Intent control = new Intent(this, ReceiverService.class)
+                    .setAction(ReceiverService.ACTION_SET_STREAM)
+                    .putExtra(ReceiverService.EXTRA_CAMERA, camera)
+                    .putExtra(ReceiverService.EXTRA_MIC, mic);
+            startService(control);
+        }
+        refreshState();
+    }
+
+    private void renderLive(String role) {
+        boolean child = "baby".equals(role);
+        boolean online = AppPrefs.peerOnline(this, role);
+        liveConnection.setText(online ? "CONNECTED" : "NOT CONNECTED");
+        liveConnection.setBackgroundColor(online ? Color.rgb(39, 145, 84) : Color.rgb(190, 57, 57));
+
+        liveMainText.setText(child ? "TRANSMITTING" : "PARENT PHONE");
+        cameraSwitch.setVisibility(child ? View.GONE : View.VISIBLE);
+        micSwitch.setVisibility(child ? View.GONE : View.VISIBLE);
+
+        View mediaControls = (View) cameraSwitch.getParent();
+        mediaControls.setVisibility(child ? View.GONE : View.VISIBLE);
+
+        batteryState.setVisibility(child ? View.GONE : View.VISIBLE);
+        videoView.setVisibility(child ? View.GONE : View.VISIBLE);
+        audioOnlyState.setVisibility(child ? View.GONE : View.VISIBLE);
+
+        boolean running = child ? "baby".equals(AppPrefs.mode(this)) : "parent".equals(AppPrefs.mode(this));
+        liveStartStop.setText(running ? (child ? "STOP TRANSMITTING" : "STOP") : (child ? "START TRANSMITTING" : "START"));
+
+        if (!child) {
+            updatingSwitches = true;
+            cameraSwitch.setChecked(AppPrefs.parentCameraEnabled(this));
+            micSwitch.setChecked(AppPrefs.parentMicEnabled(this));
+            updatingSwitches = false;
+            renderParentMedia();
+        }
+    }
+
+    private void renderParentMedia() {
+        boolean camera = AppPrefs.parentCameraEnabled(this);
+        boolean mic = AppPrefs.parentMicEnabled(this);
+        long now = System.currentTimeMillis();
+        LiveVideoStore.Frame frame = LiveVideoStore.latest();
+
+        if (camera) {
+            videoView.setVisibility(View.VISIBLE);
+            audioOnlyState.setVisibility(View.GONE);
+            if (frame != null && frame.receivedAt > displayedVideoAt) {
+                Bitmap bitmap = BitmapFactory.decodeByteArray(frame.jpeg, 0, frame.jpeg.length);
+                if (bitmap != null) {
+                    videoView.setImageBitmap(bitmap);
+                    displayedVideoAt = frame.receivedAt;
+                }
+            }
+            if (frame == null || now - frame.receivedAt > 5000) {
+                videoView.setImageDrawable(null);
+                videoView.setBackgroundColor(Color.rgb(230, 232, 235));
+            }
+        } else {
+            videoView.setVisibility(View.GONE);
+            audioOnlyState.setVisibility(View.VISIBLE);
+            audioOnlyState.setText(mic ? "AUDIO LIVE" : "TRANSMISSION PAUSED");
+        }
+
+        int pct = AppPrefs.prefs(this).getInt("baby_battery", -1);
+        boolean charging = AppPrefs.prefs(this).getBoolean("baby_charging", false);
+        if (pct >= 0) {
+            batteryState.setText("Child battery: " + pct + "%" + (charging ? "  Charging" : ""));
+            batteryState.setTextColor(pct <= 20 ? Color.rgb(177, 53, 53) : Color.rgb(37, 72, 60));
+        } else {
+            batteryState.setText("Child battery: --");
+            batteryState.setTextColor(Color.rgb(92, 99, 109));
+        }
+    }
+
+    private void refreshState() {
+        showCurrentScreen();
+        String role = selectedRole();
+        if ("baby".equals(role) && !AppPrefs.pairConfirmed(this) && AppPrefs.peerOnline(this, "baby")) {
+            AppPrefs.setPairConfirmed(this, true);
+            showCurrentScreen();
+        }
+        if (livePanel.getVisibility() == View.VISIBLE) renderLive(role);
+        if (setupPanel.getVisibility() == View.VISIBLE) renderPermissions(role);
     }
 
     private void changePhoneRole() {
@@ -675,115 +637,32 @@ public class MainActivity extends Activity {
         LiveVideoStore.clear();
         displayedVideoAt = 0L;
         AppPrefs.setMode(this, "none");
+        AppPrefs.clearPairing(this);
         AppPrefs.prefs(this).edit().remove(ROLE_PREF).apply();
-        showRoleChoice();
-    }
-
-    private void openBackgroundSettings() {
-        try {
-            startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
-        } catch (RuntimeException e) {
-            openAppSettings();
-        }
+        showCurrentScreen();
     }
 
     private void openAppSettings() {
-        Intent i = new Intent(
-                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                Uri.parse("package:" + getPackageName())
-        );
-        startActivity(i);
-    }
-
-    private void refreshState() {
-        if (babyState == null || parentState == null || batteryState == null) return;
-
-        String baby = AppPrefs.getState(this, "baby", "Stopped");
-        String parent = AppPrefs.getState(this, "parent", "Stopped");
-        babyState.setText(baby);
-        parentState.setText(parent);
-
-        boolean paired = AppPrefs.pairing(this) != null;
-        if (parentPairingState != null) {
-            parentPairingState.setText(
-                    paired
-                            ? "Paired with Child phone"
-                            : "Not connected yet — scan QR or enter pairing code"
-            );
-            parentPairingState.setTextColor(
-                    paired ? Color.rgb(37, 105, 75) : Color.rgb(92, 99, 109)
-            );
-        }
-
-        int pct = AppPrefs.prefs(this).getInt("baby_battery", -1);
-        boolean charging = AppPrefs.prefs(this).getBoolean("baby_charging", false);
-        long at = AppPrefs.prefs(this).getLong("baby_battery_at", 0L);
-
-        if (pct >= 0 && at > 0) {
-            batteryState.setText(
-                    "Child battery: " + pct + "%" + (charging ? " • charging" : "")
-            );
-            batteryState.setTextColor(
-                    pct <= 20 ? Color.rgb(177, 53, 53) : Color.rgb(37, 72, 60)
-            );
-        } else {
-            batteryState.setText("Child battery: —");
-            batteryState.setTextColor(Color.rgb(92, 99, 109));
-        }
-
-        LiveVideoStore.Frame frame = LiveVideoStore.latest();
-        long now = System.currentTimeMillis();
-
-        if (frame != null && frame.receivedAt > displayedVideoAt) {
-            Bitmap bitmap = BitmapFactory.decodeByteArray(frame.jpeg, 0, frame.jpeg.length);
-            if (bitmap != null) {
-                videoView.setImageBitmap(bitmap);
-                displayedVideoAt = frame.receivedAt;
-            }
-        }
-
-        if (frame != null && now - frame.receivedAt < 3000) {
-            videoState.setText("LIVE");
-            videoState.setTextColor(Color.rgb(37, 105, 75));
-        } else if ("parent".equals(AppPrefs.mode(this))) {
-            videoState.setText("Waiting for camera…");
-            videoState.setTextColor(Color.rgb(92, 99, 109));
-        } else {
-            videoState.setText("Camera stopped");
-            videoState.setTextColor(Color.rgb(92, 99, 109));
-        }
+        startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:" + getPackageName())));
     }
 
     private LinearLayout panel() {
         LinearLayout p = new LinearLayout(this);
         p.setOrientation(LinearLayout.VERTICAL);
         p.setPadding(dp(16), dp(16), dp(16), dp(16));
-        p.setBackgroundColor(Color.rgb(238, 240, 244));
+        p.setBackgroundColor(Color.rgb(245, 246, 248));
         return p;
     }
 
     private TextView heading(String s) {
-        TextView t = text(s, 20, Color.rgb(32, 36, 43), Gravity.START);
+        TextView t = text(s, 21, Color.rgb(32, 36, 43), Gravity.CENTER);
         t.setTypeface(null, android.graphics.Typeface.BOLD);
         return t;
     }
 
     private TextView sectionTitle(String s) {
-        TextView t = text(s, 17, Color.rgb(32, 36, 43), Gravity.START);
-        t.setTypeface(null, android.graphics.Typeface.BOLD);
-        return t;
-    }
-
-    private TextView roleLabel(String s) {
-        TextView t = text(s, 13, Color.WHITE, Gravity.CENTER);
-        t.setTypeface(null, android.graphics.Typeface.BOLD);
-        t.setPadding(dp(10), dp(8), dp(10), dp(8));
-        t.setBackgroundColor(Color.rgb(33, 46, 74));
-        return t;
-    }
-
-    private TextView statusText(String s) {
-        TextView t = text(s, 15, Color.rgb(38, 86, 70), Gravity.START);
+        TextView t = text(s, 18, Color.rgb(32, 36, 43), Gravity.START);
         t.setTypeface(null, android.graphics.Typeface.BOLD);
         return t;
     }
@@ -813,10 +692,12 @@ public class MainActivity extends Activity {
     }
 
     private LinearLayout.LayoutParams matchWrap() {
-        return new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        );
+        return new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+    }
+
+    private LinearLayout.LayoutParams height(int h) {
+        return new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, h);
     }
 
     private LinearLayout.LayoutParams spaced(int l, int t, int r, int b) {
@@ -825,11 +706,8 @@ public class MainActivity extends Activity {
         return p;
     }
 
-    private LinearLayout.LayoutParams spacedHeight(int top, int height) {
-        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                height
-        );
+    private LinearLayout.LayoutParams spacedHeight(int top, int h) {
+        LinearLayout.LayoutParams p = height(h);
         p.setMargins(0, top, 0, 0);
         return p;
     }
@@ -838,28 +716,14 @@ public class MainActivity extends Activity {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
-    @Override public void onRequestPermissionsResult(
-            int requestCode,
-            String[] permissions,
-            int[] grantResults
-    ) {
+    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-
-        if (requestCode == REQ_BABY_PERMS) {
-            boolean mic = checkSelfPermission(Manifest.permission.RECORD_AUDIO)
-                    == PackageManager.PERMISSION_GRANTED;
-            boolean camera = checkSelfPermission(Manifest.permission.CAMERA)
-                    == PackageManager.PERMISSION_GRANTED;
-
-            if (mic && camera) {
-                startBaby();
-            } else {
-                Toast.makeText(
-                        this,
-                        "Camera and microphone permissions are required on the Child phone",
-                        Toast.LENGTH_LONG
-                ).show();
-            }
+        renderPermissions(selectedRole());
+        if (requestCode == REQ_CHILD_PERMS
+                && hasPermission(Manifest.permission.CAMERA)
+                && hasPermission(Manifest.permission.RECORD_AUDIO)
+                && "baby".equals(selectedRole())) {
+            startBaby();
         }
     }
 }
