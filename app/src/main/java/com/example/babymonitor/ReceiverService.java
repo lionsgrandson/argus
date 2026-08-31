@@ -54,7 +54,7 @@ public class ReceiverService extends Service {
         }
 
         if (intent != null && ACTION_SET_STREAM.equals(intent.getAction())) {
-            boolean camera = intent.getBooleanExtra(EXTRA_CAMERA, true);
+            boolean camera = intent.getBooleanExtra(EXTRA_CAMERA, false);
             boolean mic = intent.getBooleanExtra(EXTRA_MIC, true);
             AppPrefs.setParentMedia(this, camera, mic);
             if (running.get()) sendStreamControl();
@@ -62,9 +62,9 @@ public class ReceiverService extends Service {
         }
 
         if (Build.VERSION.SDK_INT >= 29) {
-            startForeground(NOTIF_ID, notification("Starting"), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
+            startForeground(NOTIF_ID, notification("מתחיל"), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
         } else {
-            startForeground(NOTIF_ID, notification("Starting"));
+            startForeground(NOTIF_ID, notification("מתחיל"));
         }
 
         if (running.compareAndSet(false, true)) {
@@ -72,7 +72,7 @@ public class ReceiverService extends Service {
             pairing = AppPrefs.pairing(this);
             String relay = AppPrefs.relay(this);
             if (pairing == null || relay.isEmpty()) {
-                AppPrefs.state(this, "parent", "Missing pairing or relay");
+                AppPrefs.state(this, "parent", "חסרים פרטי חיבור");
                 stopSelf();
                 return START_NOT_STICKY;
             }
@@ -100,28 +100,28 @@ public class ReceiverService extends Service {
         while (running.get()) {
             try {
                 AppPrefs.setPeerOnline(this, "parent", false);
-                AppPrefs.state(this, "parent", "Connecting");
-                updateNotification("Connecting");
+                AppPrefs.state(this, "parent", "מתחבר");
+                updateNotification("מתחבר");
                 final Object closedLock = new Object();
                 final AtomicBoolean closed = new AtomicBoolean(false);
                 SecureWebSocket socket = new SecureWebSocket(AppPrefs.relay(this), pairing, "parent", new SecureWebSocket.Listener() {
                     @Override public void onOpen() {
-                        AppPrefs.state(ReceiverService.this, "parent", "Waiting for Child phone");
-                        updateNotification("Waiting for Child phone");
+                        AppPrefs.state(ReceiverService.this, "parent", "ממתין לטלפון הילד");
+                        updateNotification("ממתין לטלפון הילד");
                     }
                     @Override public void onText(String text) {
                         if ("PEER:ONLINE".equals(text)) {
                             peerOnline.set(true);
                             AppPrefs.setPeerOnline(ReceiverService.this, "parent", true);
                             AppPrefs.setPairConfirmed(ReceiverService.this, true);
-                            AppPrefs.state(ReceiverService.this, "parent", "Connected");
-                            updateNotification("Connected");
+                            AppPrefs.state(ReceiverService.this, "parent", "מחובר");
+                            updateNotification("מחובר");
                             sendStreamControl();
                         } else if ("PEER:OFFLINE".equals(text)) {
                             peerOnline.set(false);
                             AppPrefs.setPeerOnline(ReceiverService.this, "parent", false);
-                            AppPrefs.state(ReceiverService.this, "parent", "Child phone disconnected");
-                            if (hadLiveMedia) triggerConnectionAlarm("Child phone disconnected");
+                            AppPrefs.state(ReceiverService.this, "parent", "טלפון הילד התנתק");
+                            if (hadLiveMedia) triggerConnectionAlarm("טלפון הילד התנתק");
                         }
                     }
                     @Override public void onBinary(byte[] data) { handleEncrypted(data); }
@@ -133,7 +133,7 @@ public class ReceiverService extends Service {
                     @Override public void onError(Exception error) {
                         peerOnline.set(false);
                         AppPrefs.setPeerOnline(ReceiverService.this, "parent", false);
-                        AppPrefs.state(ReceiverService.this, "parent", "Reconnecting");
+                        AppPrefs.state(ReceiverService.this, "parent", "מתחבר מחדש");
                     }
                 });
                 ws = socket;
@@ -144,9 +144,9 @@ public class ReceiverService extends Service {
                 }
             } catch (Exception e) {
                 AppPrefs.setPeerOnline(this, "parent", false);
-                AppPrefs.state(this, "parent", "Reconnecting");
-                updateNotification("Reconnecting");
-                if (hadLiveMedia) triggerConnectionAlarm("Parent phone lost connection");
+                AppPrefs.state(this, "parent", "מתחבר מחדש");
+                updateNotification("מתחבר מחדש");
+                if (hadLiveMedia) triggerConnectionAlarm("טלפון ההורה איבד את החיבור");
             } finally {
                 SecureWebSocket old = ws;
                 ws = null;
@@ -233,11 +233,11 @@ public class ReceiverService extends Service {
         boolean videoLive = camera && now - lastVideoAt < 3000;
         boolean audioLive = mic && now - lastAudioAt < 3000;
         String state;
-        if (videoLive && audioLive) state = "LIVE camera + audio";
-        else if (videoLive) state = "LIVE camera";
-        else if (audioLive) state = "LIVE audio";
-        else if (!camera && !mic) state = "Transmission paused";
-        else state = "Connected";
+        if (videoLive && audioLive) state = "מצלמה ומיקרופון פעילים";
+        else if (videoLive) state = "מצלמה פעילה";
+        else if (audioLive) state = "מיקרופון פעיל";
+        else if (!camera && !mic) state = "השידור מושהה";
+        else state = "מחובר";
         AppPrefs.state(this, "parent", state);
         updateNotification(state);
     }
@@ -251,19 +251,19 @@ public class ReceiverService extends Service {
         boolean staleAudio = mic && now - lastAudioAt > 8000;
         boolean staleVideo = camera && now - lastVideoAt > 8000;
         if ((mic && !camera && staleAudio) || (camera && !mic && staleVideo) || (camera && mic && staleAudio && staleVideo)) {
-            triggerConnectionAlarm("No Child stream received");
+            triggerConnectionAlarm("לא התקבל שידור מטלפון הילד");
         }
     }
 
     private synchronized void triggerConnectionAlarm(String reason) {
         if (!running.get() || !hadLiveMedia) return;
-        AppPrefs.state(this, "parent", "ALERT - " + reason);
+        AppPrefs.state(this, "parent", "התראה: " + reason);
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         Intent open = new Intent(this, MainActivity.class);
         PendingIntent pi = PendingIntent.getActivity(this, 21, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         Notification n = new Notification.Builder(this, "argus_alerts")
                 .setSmallIcon(android.R.drawable.stat_notify_error)
-                .setContentTitle("ARGUS connection lost")
+                .setContentTitle("החיבור של ARGUS נותק")
                 .setContentText(reason)
                 .setCategory(Notification.CATEGORY_ALARM)
                 .setPriority(Notification.PRIORITY_MAX)
@@ -288,8 +288,8 @@ public class ReceiverService extends Service {
     private void notifyLowBattery(int pct) {
         Notification n = new Notification.Builder(this, "argus_warnings")
                 .setSmallIcon(android.R.drawable.stat_sys_warning)
-                .setContentTitle("Child phone battery low")
-                .setContentText("Child phone is at " + pct + "%")
+                .setContentTitle("הסוללה של טלפון הילד נמוכה")
+                .setContentText("סוללת הילד על " + pct + "%")
                 .setCategory(Notification.CATEGORY_ALARM)
                 .setPriority(Notification.PRIORITY_HIGH)
                 .setAutoCancel(true).build();
@@ -318,9 +318,9 @@ public class ReceiverService extends Service {
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         return new Notification.Builder(this, "argus_receiver")
                 .setSmallIcon(android.R.drawable.ic_lock_silent_mode_off)
-                .setContentTitle("ARGUS Parent phone")
+                .setContentTitle("ARGUS פעיל")
                 .setContentText(text).setOngoing(true).setOnlyAlertOnce(true).setContentIntent(content)
-                .addAction(new Notification.Action.Builder(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPi).build())
+                .addAction(new Notification.Action.Builder(android.R.drawable.ic_menu_close_clear_cancel, "עצור", stopPi).build())
                 .build();
     }
 
@@ -330,16 +330,16 @@ public class ReceiverService extends Service {
 
     private void createChannels() {
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        nm.createNotificationChannel(new NotificationChannel("argus_receiver", "ARGUS listener", NotificationManager.IMPORTANCE_LOW));
-        NotificationChannel alerts = new NotificationChannel("argus_alerts", "ARGUS connection alarms", NotificationManager.IMPORTANCE_HIGH);
+        nm.createNotificationChannel(new NotificationChannel("argus_receiver", "האזנה של ARGUS", NotificationManager.IMPORTANCE_LOW));
+        NotificationChannel alerts = new NotificationChannel("argus_alerts", "התראות חיבור של ARGUS", NotificationManager.IMPORTANCE_HIGH);
         alerts.enableVibration(true);
-        alerts.setDescription("Connection loss warnings after monitoring has started");
+        alerts.setDescription("התראות כאשר החיבור מתנתק לאחר תחילת ההאזנה");
         alerts.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM),
                 new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build());
         nm.createNotificationChannel(alerts);
-        NotificationChannel warnings = new NotificationChannel("argus_warnings", "ARGUS battery warnings", NotificationManager.IMPORTANCE_DEFAULT);
+        NotificationChannel warnings = new NotificationChannel("argus_warnings", "התראות סוללה של ARGUS", NotificationManager.IMPORTANCE_DEFAULT);
         warnings.enableVibration(true);
-        warnings.setDescription("Child phone low battery warnings");
+        warnings.setDescription("התראות על סוללה נמוכה בטלפון הילד");
         nm.createNotificationChannel(warnings);
     }
 
@@ -360,7 +360,7 @@ public class ReceiverService extends Service {
         }
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         if (wifiLock != null && wifiLock.isHeld()) wifiLock.release();
-        AppPrefs.state(this, "parent", "Stopped");
+        AppPrefs.state(this, "parent", "נעצר");
         super.onDestroy();
     }
 
