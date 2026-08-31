@@ -53,6 +53,7 @@ export default {
           reconnect: true,
           audio: true,
           video: true,
+          parentStreamControl: true,
         },
         { headers: { "cache-control": "no-store" } },
       );
@@ -130,17 +131,12 @@ export class Room extends DurableObject {
       return new Response("Unauthorized", { status: 401 });
     }
 
-    // First valid phone permanently claims this random room with the QR auth token.
-    // The value is intentionally never expired so normal disconnects, reboots,
-    // Wi-Fi changes, mobile-data changes, and app restarts never require pairing again.
     if (!storedHash) {
       await this.ctx.storage.put("authHash", suppliedHash);
       await this.ctx.storage.put("pairedAt", Date.now());
       logEvent("room_paired", { role, room: hint });
     }
 
-    // A reconnect from the same phone role replaces only its stale socket.
-    // It does not alter or reset the pairing.
     for (const [socket, session] of this.sessions) {
       if (session.role === role) {
         try { socket.close(4001, "Replaced by reconnect"); } catch {}
@@ -185,12 +181,12 @@ export class Room extends DurableObject {
 
   async webSocketMessage(ws, message) {
     const session = this.sessions.get(ws) || wsAttachment(ws);
-    if (!session || session.role !== "baby") return;
+    if (!session || !["baby", "parent"].includes(session.role)) return;
     if (!(message instanceof ArrayBuffer)) return;
 
     const size = message.byteLength;
     if (size > MAX_FRAME_BYTES) {
-      logEvent("frame_rejected", { room: session.roomHint || "unknown", reason: "frame_too_large", bytes: size });
+      logEvent("frame_rejected", { room: session.roomHint || "unknown", role: session.role, reason: "frame_too_large", bytes: size });
       return;
     }
 
@@ -201,18 +197,17 @@ export class Room extends DurableObject {
     }
     session.windowBytes += size;
 
-    // Protect the relay from a broken client without destroying a valid pairing.
-    // A temporary burst is dropped; the WebSocket stays alive and can continue.
     if (session.windowBytes > MAX_BYTES_PER_10S) {
-      logEvent("frame_rejected", { room: session.roomHint || "unknown", reason: "temporary_rate_limit" });
+      logEvent("frame_rejected", { room: session.roomHint || "unknown", role: session.role, reason: "temporary_rate_limit" });
       return;
     }
 
     ws.serializeAttachment(session);
     this.sessions.set(ws, session);
 
+    const targetRole = session.role === "baby" ? "parent" : "baby";
     for (const [socket, state] of this.sessions) {
-      if (state.role === "parent") {
+      if (state.role === targetRole) {
         try { socket.send(message); } catch {}
       }
     }
