@@ -22,7 +22,7 @@ public class SenderService extends Service {
 
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean peerOnline = new AtomicBoolean(false);
-    private final AtomicBoolean cameraEnabled = new AtomicBoolean(true);
+    private final AtomicBoolean cameraEnabled = new AtomicBoolean(false);
     private final AtomicBoolean micEnabled = new AtomicBoolean(true);
     private final AtomicLong sequence = new AtomicLong(1);
     private final Object packetSendLock = new Object();
@@ -52,17 +52,17 @@ public class SenderService extends Service {
         RootSupport.preAuthorizeAsync();
 
         if (Build.VERSION.SDK_INT >= 30) {
-            startForeground(NOTIF_ID, notification("Starting transmission"),
+            startForeground(NOTIF_ID, notification("מתחיל שידור"),
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE | ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA);
         } else {
-            startForeground(NOTIF_ID, notification("Starting transmission"));
+            startForeground(NOTIF_ID, notification("מתחיל שידור"));
         }
 
         if (running.compareAndSet(false, true)) {
             pairing = AppPrefs.pairing(this);
             String relay = AppPrefs.relay(this);
             if (pairing == null || relay.isEmpty()) {
-                AppPrefs.state(this, "baby", "Missing pairing or relay");
+                AppPrefs.state(this, "baby", "חסרים פרטי חיבור");
                 stopSelf();
                 return START_NOT_STICKY;
             }
@@ -103,14 +103,14 @@ public class SenderService extends Service {
         while (running.get()) {
             try {
                 AppPrefs.setPeerOnline(this, "baby", false);
-                AppPrefs.state(this, "baby", "Connecting");
-                updateNotification("Connecting");
+                AppPrefs.state(this, "baby", "מתחבר");
+                updateNotification("מתחבר");
                 final Object closedLock = new Object();
                 final AtomicBoolean closed = new AtomicBoolean(false);
                 SecureWebSocket socket = new SecureWebSocket(AppPrefs.relay(this), pairing, "baby", new SecureWebSocket.Listener() {
                     @Override public void onOpen() {
-                        AppPrefs.state(SenderService.this, "baby", "Waiting for Parent phone");
-                        updateNotification("Waiting for Parent phone");
+                        AppPrefs.state(SenderService.this, "baby", "ממתין לטלפון ההורה");
+                        updateNotification("ממתין לטלפון ההורה");
                     }
                     @Override public void onText(String text) {
                         if ("PEER:ONLINE".equals(text)) {
@@ -122,8 +122,8 @@ public class SenderService extends Service {
                         } else if ("PEER:OFFLINE".equals(text)) {
                             peerOnline.set(false);
                             AppPrefs.setPeerOnline(SenderService.this, "baby", false);
-                            AppPrefs.state(SenderService.this, "baby", "Parent phone disconnected");
-                            updateNotification("Waiting for Parent phone");
+                            AppPrefs.state(SenderService.this, "baby", "טלפון ההורה התנתק");
+                            updateNotification("ממתין לטלפון ההורה");
                         }
                     }
                     @Override public void onBinary(byte[] data) {
@@ -137,7 +137,7 @@ public class SenderService extends Service {
                     @Override public void onError(Exception error) {
                         peerOnline.set(false);
                         AppPrefs.setPeerOnline(SenderService.this, "baby", false);
-                        AppPrefs.state(SenderService.this, "baby", "Reconnecting");
+                        AppPrefs.state(SenderService.this, "baby", "מתחבר מחדש");
                     }
                 });
                 ws = socket;
@@ -148,8 +148,8 @@ public class SenderService extends Service {
                 }
             } catch (Exception e) {
                 AppPrefs.setPeerOnline(this, "baby", false);
-                AppPrefs.state(this, "baby", "Reconnecting");
-                updateNotification("Reconnecting");
+                AppPrefs.state(this, "baby", "מתחבר מחדש");
+                updateNotification("מתחבר מחדש");
             } finally {
                 SecureWebSocket old = ws;
                 ws = null;
@@ -176,7 +176,7 @@ public class SenderService extends Service {
             lastControlSequence = d.sequence;
 
             JSONObject j = new JSONObject(new String(d.payload, StandardCharsets.UTF_8));
-            boolean camera = j.optBoolean("camera", true);
+            boolean camera = j.optBoolean("camera", false);
             boolean mic = j.optBoolean("mic", true);
             cameraEnabled.set(camera);
             micEnabled.set(mic);
@@ -190,15 +190,15 @@ public class SenderService extends Service {
     }
 
     private String liveDescription() {
-        if (cameraEnabled.get() && micEnabled.get()) return "Transmitting camera + microphone";
-        if (cameraEnabled.get()) return "Transmitting camera";
-        if (micEnabled.get()) return "Transmitting microphone";
-        return "Connected - transmission paused";
+        if (cameraEnabled.get() && micEnabled.get()) return "מצלמה ומיקרופון פעילים";
+        if (cameraEnabled.get()) return "מצלמה פעילה";
+        if (micEnabled.get()) return "מיקרופון פעיל";
+        return "מחובר, השידור מושהה";
     }
 
     private void audioLoop() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            AppPrefs.state(this, "baby", "Microphone permission missing");
+            AppPrefs.state(this, "baby", "חסרה הרשאת מיקרופון");
             stopSelf();
             return;
         }
@@ -219,8 +219,8 @@ public class SenderService extends Service {
                 sendEncrypted(PacketCodec.TYPE_AUDIO, ulaw, encoded);
             }
         } catch (Exception e) {
-            AppPrefs.state(this, "baby", "Microphone error");
-            updateNotification("Microphone error - open ARGUS");
+            AppPrefs.state(this, "baby", "שגיאת מיקרופון");
+            updateNotification("שגיאת מיקרופון, יש לפתוח את ARGUS");
             stopSelf();
         } finally {
             if (recorder != null) {
@@ -281,7 +281,7 @@ public class SenderService extends Service {
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         return new Notification.Builder(this, "argus_sender")
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
-                .setContentTitle("ARGUS")
+                .setContentTitle("ARGUS פעיל")
                 .setContentText(text)
                 .setCategory(Notification.CATEGORY_SERVICE)
                 .setPriority(Notification.PRIORITY_LOW)
@@ -289,7 +289,7 @@ public class SenderService extends Service {
                 .setVibrate(null)
                 .setDefaults(0)
                 .setOngoing(true).setOnlyAlertOnce(true).setContentIntent(content)
-                .addAction(new Notification.Action.Builder(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPi).build())
+                .addAction(new Notification.Action.Builder(android.R.drawable.ic_menu_close_clear_cancel, "עצור", stopPi).build())
                 .build();
     }
 
@@ -299,8 +299,8 @@ public class SenderService extends Service {
 
     private void createChannel() {
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        NotificationChannel c = new NotificationChannel("argus_sender", "ARGUS background service", NotificationManager.IMPORTANCE_LOW);
-        c.setDescription("ARGUS child transmission service");
+        NotificationChannel c = new NotificationChannel("argus_sender", "שירות הרקע של ARGUS", NotificationManager.IMPORTANCE_LOW);
+        c.setDescription("שירות השידור של טלפון הילד");
         c.setSound(null, null);
         c.enableVibration(false);
         c.setShowBadge(false);
@@ -328,7 +328,7 @@ public class SenderService extends Service {
         }
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         if (wifiLock != null && wifiLock.isHeld()) wifiLock.release();
-        AppPrefs.state(this, "baby", "Stopped");
+        AppPrefs.state(this, "baby", "נעצר");
         super.onDestroy();
     }
 
