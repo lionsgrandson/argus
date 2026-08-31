@@ -22,9 +22,13 @@ public class SenderService extends Service {
 
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean peerOnline = new AtomicBoolean(false);
+    private final AtomicBoolean cameraEnabled = new AtomicBoolean(true);
+    private final AtomicBoolean micEnabled = new AtomicBoolean(true);
     private final AtomicLong sequence = new AtomicLong(1);
     private final Object packetSendLock = new Object();
     private final long sessionId = new SecureRandom().nextLong();
+    private volatile long controlSession = Long.MIN_VALUE;
+    private volatile long lastControlSequence = 0L;
     private volatile SecureWebSocket ws;
     private AudioRecord recorder;
     private CameraStreamer cameraStreamer;
@@ -45,26 +49,25 @@ public class SenderService extends Service {
             return START_NOT_STICKY;
         }
 
-        // On rooted phones this gives the root manager a chance to grant ARGUS
-        // persistent su access during an ordinary user-initiated start. On normal
-        // phones it fails quietly and has no effect.
         RootSupport.preAuthorizeAsync();
 
         if (Build.VERSION.SDK_INT >= 30) {
-            startForeground(NOTIF_ID, notification("Starting camera + microphone…"),
+            startForeground(NOTIF_ID, notification("Starting transmission"),
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE | ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA);
         } else {
-            startForeground(NOTIF_ID, notification("Starting camera + microphone…"));
+            startForeground(NOTIF_ID, notification("Starting transmission"));
         }
 
         if (running.compareAndSet(false, true)) {
             pairing = AppPrefs.pairing(this);
             String relay = AppPrefs.relay(this);
             if (pairing == null || relay.isEmpty()) {
-                AppPrefs.state(this, "baby", "Missing pairing code or relay URL");
+                AppPrefs.state(this, "baby", "Missing pairing or relay");
                 stopSelf();
                 return START_NOT_STICKY;
             }
+            cameraEnabled.set(AppPrefs.childCameraEnabled(this));
+            micEnabled.set(AppPrefs.childMicEnabled(this));
             codec = new PacketCodec(pairing.encryptionKey);
             acquireLocks();
             startCamera();
@@ -76,7 +79,8 @@ public class SenderService extends Service {
     }
 
     private void startCamera() {
-        cameraStreamer = new CameraStreamer(this, peerOnline::get,
+        cameraStreamer = new CameraStreamer(this,
+                () -> peerOnline.get() && cameraEnabled.get(),
                 jpeg -> sendEncrypted(PacketCodec.TYPE_VIDEO_JPEG, jpeg, jpeg.length));
         cameraStreamer.start();
     }
@@ -98,33 +102,42 @@ public class SenderService extends Service {
         int delayMs = 1000;
         while (running.get()) {
             try {
-                AppPrefs.state(this, "baby", "Connecting securely…");
-                updateNotification("Connecting securely…");
+                AppPrefs.setPeerOnline(this, "baby", false);
+                AppPrefs.state(this, "baby", "Connecting");
+                updateNotification("Connecting");
                 final Object closedLock = new Object();
                 final AtomicBoolean closed = new AtomicBoolean(false);
                 SecureWebSocket socket = new SecureWebSocket(AppPrefs.relay(this), pairing, "baby", new SecureWebSocket.Listener() {
                     @Override public void onOpen() {
-                        AppPrefs.state(SenderService.this, "baby", "Connected — waiting for parent");
-                        updateNotification("Connected — waiting for parent");
+                        AppPrefs.state(SenderService.this, "baby", "Waiting for Parent phone");
+                        updateNotification("Waiting for Parent phone");
                     }
                     @Override public void onText(String text) {
                         if ("PEER:ONLINE".equals(text)) {
                             peerOnline.set(true);
-                            AppPrefs.state(SenderService.this, "baby", "LIVE — camera + microphone");
-                            updateNotification("LIVE — camera + microphone");
+                            AppPrefs.setPeerOnline(SenderService.this, "baby", true);
+                            AppPrefs.setPairConfirmed(SenderService.this, true);
+                            AppPrefs.state(SenderService.this, "baby", liveDescription());
+                            updateNotification(liveDescription());
                         } else if ("PEER:OFFLINE".equals(text)) {
                             peerOnline.set(false);
-                            AppPrefs.state(SenderService.this, "baby", "Connected — parent offline");
-                            updateNotification("Connected — waiting for parent");
+                            AppPrefs.setPeerOnline(SenderService.this, "baby", false);
+                            AppPrefs.state(SenderService.this, "baby", "Parent phone disconnected");
+                            updateNotification("Waiting for Parent phone");
                         }
                     }
-                    @Override public void onBinary(byte[] data) { }
+                    @Override public void onBinary(byte[] data) {
+                        handleStreamControl(data);
+                    }
                     @Override public void onClosed(String reason) {
                         peerOnline.set(false);
+                        AppPrefs.setPeerOnline(SenderService.this, "baby", false);
                         synchronized (closedLock) { closed.set(true); closedLock.notifyAll(); }
                     }
                     @Override public void onError(Exception error) {
-                        AppPrefs.state(SenderService.this, "baby", "Relay error — reconnecting");
+                        peerOnline.set(false);
+                        AppPrefs.setPeerOnline(SenderService.this, "baby", false);
+                        AppPrefs.state(SenderService.this, "baby", "Reconnecting");
                     }
                 });
                 ws = socket;
@@ -134,19 +147,53 @@ public class SenderService extends Service {
                     while (running.get() && !closed.get()) closedLock.wait(1000);
                 }
             } catch (Exception e) {
-                AppPrefs.state(this, "baby", "Offline — reconnecting");
-                updateNotification("Offline — reconnecting…");
+                AppPrefs.setPeerOnline(this, "baby", false);
+                AppPrefs.state(this, "baby", "Reconnecting");
+                updateNotification("Reconnecting");
             } finally {
                 SecureWebSocket old = ws;
                 ws = null;
                 if (old != null) old.close();
                 peerOnline.set(false);
+                AppPrefs.setPeerOnline(this, "baby", false);
             }
             if (running.get()) {
                 try { Thread.sleep(delayMs); } catch (InterruptedException ignored) { }
                 delayMs = Math.min(delayMs * 2, 15000);
             }
         }
+    }
+
+    private void handleStreamControl(byte[] data) {
+        try {
+            PacketCodec.Decoded d = codec.decrypt(data);
+            if (d.type != PacketCodec.TYPE_STREAM_CONTROL) return;
+            if (controlSession == Long.MIN_VALUE || d.session != controlSession) {
+                controlSession = d.session;
+                lastControlSequence = 0L;
+            }
+            if (d.sequence <= lastControlSequence) return;
+            lastControlSequence = d.sequence;
+
+            JSONObject j = new JSONObject(new String(d.payload, StandardCharsets.UTF_8));
+            boolean camera = j.optBoolean("camera", true);
+            boolean mic = j.optBoolean("mic", true);
+            cameraEnabled.set(camera);
+            micEnabled.set(mic);
+            AppPrefs.setChildMedia(this, camera, mic);
+            if (peerOnline.get()) {
+                AppPrefs.state(this, "baby", liveDescription());
+                updateNotification(liveDescription());
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private String liveDescription() {
+        if (cameraEnabled.get() && micEnabled.get()) return "Transmitting camera + microphone";
+        if (cameraEnabled.get()) return "Transmitting camera";
+        if (micEnabled.get()) return "Transmitting microphone";
+        return "Connected - transmission paused";
     }
 
     private void audioLoop() {
@@ -167,13 +214,13 @@ public class SenderService extends Service {
             while (running.get()) {
                 int read = recorder.read(pcm, 0, pcm.length, AudioRecord.READ_BLOCKING);
                 if (read <= 0) continue;
-                if (!peerOnline.get()) continue;
+                if (!peerOnline.get() || !micEnabled.get()) continue;
                 int encoded = MuLaw.encodePcm16(pcm, read, ulaw);
                 sendEncrypted(PacketCodec.TYPE_AUDIO, ulaw, encoded);
             }
         } catch (Exception e) {
-            AppPrefs.state(this, "baby", "Microphone error — monitoring stopped");
-            updateNotification("Microphone error — open ARGUS");
+            AppPrefs.state(this, "baby", "Microphone error");
+            updateNotification("Microphone error - open ARGUS");
             stopSelf();
         } finally {
             if (recorder != null) {
@@ -201,13 +248,14 @@ public class SenderService extends Service {
                     JSONObject j = new JSONObject();
                     j.put("battery", pct);
                     j.put("charging", charging);
-                    j.put("camera", cameraStreamer != null && cameraStreamer.isReady());
+                    j.put("camera", cameraEnabled.get() && cameraStreamer != null && cameraStreamer.isReady());
+                    j.put("mic", micEnabled.get());
                     j.put("time", System.currentTimeMillis());
                     byte[] clear = j.toString().getBytes(StandardCharsets.UTF_8);
                     sendEncrypted(PacketCodec.TYPE_STATUS, clear, clear.length);
                 }
             } catch (Exception ignored) { }
-            try { Thread.sleep(15000); } catch (InterruptedException ignored) { }
+            try { Thread.sleep(5000); } catch (InterruptedException ignored) { }
         }
     }
 
@@ -233,8 +281,8 @@ public class SenderService extends Service {
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         return new Notification.Builder(this, "argus_sender")
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
-                .setContentTitle("Orion Monitor")
-                .setContentText("Background service running")
+                .setContentTitle("ARGUS")
+                .setContentText(text)
                 .setCategory(Notification.CATEGORY_SERVICE)
                 .setPriority(Notification.PRIORITY_LOW)
                 .setSound(null)
@@ -251,8 +299,8 @@ public class SenderService extends Service {
 
     private void createChannel() {
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        NotificationChannel c = new NotificationChannel("argus_sender", "Orion Monitor background service", NotificationManager.IMPORTANCE_LOW);
-        c.setDescription("Background service while monitoring is active");
+        NotificationChannel c = new NotificationChannel("argus_sender", "ARGUS background service", NotificationManager.IMPORTANCE_LOW);
+        c.setDescription("ARGUS child transmission service");
         c.setSound(null, null);
         c.enableVibration(false);
         c.setShowBadge(false);
@@ -261,7 +309,7 @@ public class SenderService extends Service {
 
     @Override public void onTaskRemoved(Intent rootIntent) {
         if ("baby".equals(AppPrefs.mode(this)) && running.get()) {
-            AppPrefs.state(this, "baby", "Running in background");
+            AppPrefs.state(this, "baby", liveDescription());
         }
         super.onTaskRemoved(rootIntent);
     }
@@ -269,6 +317,7 @@ public class SenderService extends Service {
     @Override public void onDestroy() {
         running.set(false);
         peerOnline.set(false);
+        AppPrefs.setPeerOnline(this, "baby", false);
         SecureWebSocket socket = ws;
         ws = null;
         if (socket != null) socket.close();
