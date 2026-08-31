@@ -8,6 +8,7 @@ import android.net.wifi.WifiManager;
 import android.os.*;
 import org.json.JSONObject;
 import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
 
@@ -15,10 +16,15 @@ public class ReceiverService extends Service {
     private static final int NOTIF_ID = 1002;
     private static final int ALERT_ID = 1099;
     private static final int SAMPLE_RATE = 8000;
+    static final String ACTION_SET_STREAM = "com.example.babymonitor.SET_STREAM";
+    static final String EXTRA_CAMERA = "camera";
+    static final String EXTRA_MIC = "mic";
     private static final String ACTION_STOP = "com.example.babymonitor.STOP_PARENT";
 
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean peerOnline = new AtomicBoolean(false);
+    private final AtomicLong controlSequence = new AtomicLong(1);
+    private final long controlSession = new SecureRandom().nextLong();
     private volatile SecureWebSocket ws;
     private PairingConfig pairing;
     private PacketCodec codec;
@@ -30,7 +36,7 @@ public class ReceiverService extends Service {
     private volatile long lastVideoAt = 0L;
     private volatile long lastUiStateAt = 0L;
     private volatile long lastAlertAt = 0L;
-    private volatile boolean hadLiveAudio = false;
+    private volatile boolean hadLiveMedia = false;
     private volatile boolean lowBatteryNotified = false;
     private volatile long currentSession = Long.MIN_VALUE;
     private volatile long lastSequence = 0L;
@@ -46,10 +52,19 @@ public class ReceiverService extends Service {
             stopSelf();
             return START_NOT_STICKY;
         }
+
+        if (intent != null && ACTION_SET_STREAM.equals(intent.getAction())) {
+            boolean camera = intent.getBooleanExtra(EXTRA_CAMERA, true);
+            boolean mic = intent.getBooleanExtra(EXTRA_MIC, true);
+            AppPrefs.setParentMedia(this, camera, mic);
+            if (running.get()) sendStreamControl();
+            return START_STICKY;
+        }
+
         if (Build.VERSION.SDK_INT >= 29) {
-            startForeground(NOTIF_ID, notification("Starting secure listener…"), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
+            startForeground(NOTIF_ID, notification("Starting"), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
         } else {
-            startForeground(NOTIF_ID, notification("Starting secure listener…"));
+            startForeground(NOTIF_ID, notification("Starting"));
         }
 
         if (running.compareAndSet(false, true)) {
@@ -57,7 +72,7 @@ public class ReceiverService extends Service {
             pairing = AppPrefs.pairing(this);
             String relay = AppPrefs.relay(this);
             if (pairing == null || relay.isEmpty()) {
-                AppPrefs.state(this, "parent", "Missing pairing code or relay URL");
+                AppPrefs.state(this, "parent", "Missing pairing or relay");
                 stopSelf();
                 return START_NOT_STICKY;
             }
@@ -84,33 +99,41 @@ public class ReceiverService extends Service {
         int delayMs = 1000;
         while (running.get()) {
             try {
-                AppPrefs.state(this, "parent", "Connecting securely…");
-                updateNotification("Connecting securely…");
+                AppPrefs.setPeerOnline(this, "parent", false);
+                AppPrefs.state(this, "parent", "Connecting");
+                updateNotification("Connecting");
                 final Object closedLock = new Object();
                 final AtomicBoolean closed = new AtomicBoolean(false);
                 SecureWebSocket socket = new SecureWebSocket(AppPrefs.relay(this), pairing, "parent", new SecureWebSocket.Listener() {
                     @Override public void onOpen() {
-                        AppPrefs.state(ReceiverService.this, "parent", "Connected — waiting for Child phone");
-                        updateNotification("Connected — waiting for Child phone");
+                        AppPrefs.state(ReceiverService.this, "parent", "Waiting for Child phone");
+                        updateNotification("Waiting for Child phone");
                     }
                     @Override public void onText(String text) {
                         if ("PEER:ONLINE".equals(text)) {
                             peerOnline.set(true);
-                            AppPrefs.state(ReceiverService.this, "parent", "Child phone connected — waiting for stream");
-                            updateNotification("Child phone connected — waiting for stream");
+                            AppPrefs.setPeerOnline(ReceiverService.this, "parent", true);
+                            AppPrefs.setPairConfirmed(ReceiverService.this, true);
+                            AppPrefs.state(ReceiverService.this, "parent", "Connected");
+                            updateNotification("Connected");
+                            sendStreamControl();
                         } else if ("PEER:OFFLINE".equals(text)) {
                             peerOnline.set(false);
+                            AppPrefs.setPeerOnline(ReceiverService.this, "parent", false);
                             AppPrefs.state(ReceiverService.this, "parent", "Child phone disconnected");
-                            if (hadLiveAudio) triggerConnectionAlarm("Child phone disconnected");
+                            if (hadLiveMedia) triggerConnectionAlarm("Child phone disconnected");
                         }
                     }
                     @Override public void onBinary(byte[] data) { handleEncrypted(data); }
                     @Override public void onClosed(String reason) {
                         peerOnline.set(false);
+                        AppPrefs.setPeerOnline(ReceiverService.this, "parent", false);
                         synchronized (closedLock) { closed.set(true); closedLock.notifyAll(); }
                     }
                     @Override public void onError(Exception error) {
-                        AppPrefs.state(ReceiverService.this, "parent", "Relay error — reconnecting");
+                        peerOnline.set(false);
+                        AppPrefs.setPeerOnline(ReceiverService.this, "parent", false);
+                        AppPrefs.state(ReceiverService.this, "parent", "Reconnecting");
                     }
                 });
                 ws = socket;
@@ -120,19 +143,35 @@ public class ReceiverService extends Service {
                     while (running.get() && !closed.get()) closedLock.wait(1000);
                 }
             } catch (Exception e) {
-                AppPrefs.state(this, "parent", "Offline — reconnecting");
-                updateNotification("Offline — reconnecting…");
-                if (hadLiveAudio) triggerConnectionAlarm("Parent phone lost relay connection");
+                AppPrefs.setPeerOnline(this, "parent", false);
+                AppPrefs.state(this, "parent", "Reconnecting");
+                updateNotification("Reconnecting");
+                if (hadLiveMedia) triggerConnectionAlarm("Parent phone lost connection");
             } finally {
                 SecureWebSocket old = ws;
                 ws = null;
                 if (old != null) old.close();
                 peerOnline.set(false);
+                AppPrefs.setPeerOnline(this, "parent", false);
             }
             if (running.get()) {
                 try { Thread.sleep(delayMs); } catch (InterruptedException ignored) { }
                 delayMs = Math.min(delayMs * 2, 15000);
             }
+        }
+    }
+
+    private void sendStreamControl() {
+        try {
+            SecureWebSocket socket = ws;
+            if (!running.get() || !peerOnline.get() || socket == null || !socket.isOpen() || codec == null) return;
+            JSONObject j = new JSONObject();
+            j.put("camera", AppPrefs.parentCameraEnabled(this));
+            j.put("mic", AppPrefs.parentMicEnabled(this));
+            byte[] clear = j.toString().getBytes(StandardCharsets.UTF_8);
+            long next = controlSequence.getAndIncrement();
+            socket.sendBinary(codec.encrypt(PacketCodec.TYPE_STREAM_CONTROL, controlSession, next, clear, clear.length));
+        } catch (Exception ignored) {
         }
     }
 
@@ -151,18 +190,24 @@ public class ReceiverService extends Service {
             lastSequence = d.sequence;
 
             if (d.type == PacketCodec.TYPE_AUDIO) {
-                byte[] pcm = new byte[d.payload.length * 2];
-                int n = MuLaw.decodeToPcm16(d.payload, pcm);
-                AudioTrack t = track;
-                if (t != null) t.write(pcm, 0, n, AudioTrack.WRITE_BLOCKING);
-                lastAudioAt = System.currentTimeMillis();
-                hadLiveAudio = true;
-                clearConnectionAlarm();
-                publishLiveState();
+                if (AppPrefs.parentMicEnabled(this)) {
+                    byte[] pcm = new byte[d.payload.length * 2];
+                    int n = MuLaw.decodeToPcm16(d.payload, pcm);
+                    AudioTrack t = track;
+                    if (t != null) t.write(pcm, 0, n, AudioTrack.WRITE_BLOCKING);
+                    lastAudioAt = System.currentTimeMillis();
+                    hadLiveMedia = true;
+                    clearConnectionAlarm();
+                    publishLiveState();
+                }
             } else if (d.type == PacketCodec.TYPE_VIDEO_JPEG) {
-                LiveVideoStore.put(d.payload);
-                lastVideoAt = System.currentTimeMillis();
-                publishLiveState();
+                if (AppPrefs.parentCameraEnabled(this)) {
+                    LiveVideoStore.put(d.payload);
+                    lastVideoAt = System.currentTimeMillis();
+                    hadLiveMedia = true;
+                    clearConnectionAlarm();
+                    publishLiveState();
+                }
             } else if (d.type == PacketCodec.TYPE_STATUS) {
                 JSONObject j = new JSONObject(new String(d.payload, StandardCharsets.UTF_8));
                 int pct = j.optInt("battery", -1);
@@ -176,7 +221,6 @@ public class ReceiverService extends Service {
                 }
             }
         } catch (Exception ignored) {
-            // Authentication failures are intentionally dropped silently.
         }
     }
 
@@ -184,21 +228,36 @@ public class ReceiverService extends Service {
         long now = System.currentTimeMillis();
         if (now - lastUiStateAt < 1000) return;
         lastUiStateAt = now;
-        boolean videoLive = now - lastVideoAt < 3000;
-        String state = videoLive ? "LIVE — audio + camera" : "LIVE — audio";
+        boolean camera = AppPrefs.parentCameraEnabled(this);
+        boolean mic = AppPrefs.parentMicEnabled(this);
+        boolean videoLive = camera && now - lastVideoAt < 3000;
+        boolean audioLive = mic && now - lastAudioAt < 3000;
+        String state;
+        if (videoLive && audioLive) state = "LIVE camera + audio";
+        else if (videoLive) state = "LIVE camera";
+        else if (audioLive) state = "LIVE audio";
+        else if (!camera && !mic) state = "Transmission paused";
+        else state = "Connected";
         AppPrefs.state(this, "parent", state);
         updateNotification(state);
     }
 
     private void watchConnection() {
-        if (!running.get() || !hadLiveAudio) return;
-        long age = System.currentTimeMillis() - lastAudioAt;
-        if (age > 8000) triggerConnectionAlarm(peerOnline.get() ? "No Child audio received" : "Child phone disconnected");
+        if (!running.get() || !hadLiveMedia || !peerOnline.get()) return;
+        boolean camera = AppPrefs.parentCameraEnabled(this);
+        boolean mic = AppPrefs.parentMicEnabled(this);
+        if (!camera && !mic) return;
+        long now = System.currentTimeMillis();
+        boolean staleAudio = mic && now - lastAudioAt > 8000;
+        boolean staleVideo = camera && now - lastVideoAt > 8000;
+        if ((mic && !camera && staleAudio) || (camera && !mic && staleVideo) || (camera && mic && staleAudio && staleVideo)) {
+            triggerConnectionAlarm("No Child stream received");
+        }
     }
 
     private synchronized void triggerConnectionAlarm(String reason) {
-        if (!running.get() || !hadLiveAudio) return;
-        AppPrefs.state(this, "parent", "ALERT — " + reason);
+        if (!running.get() || !hadLiveMedia) return;
+        AppPrefs.state(this, "parent", "ALERT - " + reason);
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         Intent open = new Intent(this, MainActivity.class);
         PendingIntent pi = PendingIntent.getActivity(this, 21, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
@@ -259,7 +318,7 @@ public class ReceiverService extends Service {
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         return new Notification.Builder(this, "argus_receiver")
                 .setSmallIcon(android.R.drawable.ic_lock_silent_mode_off)
-                .setContentTitle("ARGUS — Parent phone")
+                .setContentTitle("ARGUS Parent phone")
                 .setContentText(text).setOngoing(true).setOnlyAlertOnce(true).setContentIntent(content)
                 .addAction(new Notification.Action.Builder(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPi).build())
                 .build();
@@ -274,19 +333,20 @@ public class ReceiverService extends Service {
         nm.createNotificationChannel(new NotificationChannel("argus_receiver", "ARGUS listener", NotificationManager.IMPORTANCE_LOW));
         NotificationChannel alerts = new NotificationChannel("argus_alerts", "ARGUS connection alarms", NotificationManager.IMPORTANCE_HIGH);
         alerts.enableVibration(true);
-        alerts.setDescription("Connection-loss warnings after live monitoring has started");
+        alerts.setDescription("Connection loss warnings after monitoring has started");
         alerts.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM),
                 new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build());
         nm.createNotificationChannel(alerts);
         NotificationChannel warnings = new NotificationChannel("argus_warnings", "ARGUS battery warnings", NotificationManager.IMPORTANCE_DEFAULT);
         warnings.enableVibration(true);
-        warnings.setDescription("Child-phone low-battery warnings");
+        warnings.setDescription("Child phone low battery warnings");
         nm.createNotificationChannel(warnings);
     }
 
     @Override public void onDestroy() {
         running.set(false);
         peerOnline.set(false);
+        AppPrefs.setPeerOnline(this, "parent", false);
         LiveVideoStore.clear();
         SecureWebSocket socket = ws;
         ws = null;
