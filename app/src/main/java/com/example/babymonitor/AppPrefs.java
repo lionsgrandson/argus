@@ -67,7 +67,7 @@ final class AppPrefs {
     }
 
     static boolean parentCameraEnabled(Context c) {
-        return prefs(c).getBoolean("parent_camera_enabled", true);
+        return prefs(c).getBoolean("parent_camera_enabled", false);
     }
 
     static boolean parentMicEnabled(Context c) {
@@ -82,7 +82,7 @@ final class AppPrefs {
     }
 
     static boolean childCameraEnabled(Context c) {
-        return prefs(c).getBoolean("child_camera_enabled", true);
+        return prefs(c).getBoolean("child_camera_enabled", false);
     }
 
     static boolean childMicEnabled(Context c) {
