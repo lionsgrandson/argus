@@ -1,0 +1,28 @@
+ARGUS CLOUDFLARE DEPLOY
+========================
+
+Use:
+    deploy-cloudflare.cmd
+
+You do NOT need to keep an API key inside the repository or paste a new key every time.
+
+How authentication works:
+1. The first time you run deploy-cloudflare.cmd on a PC, it checks whether Cloudflare Wrangler is already signed in.
+2. If not, it opens the normal Cloudflare browser login.
+3. After you sign in once, Wrangler saves the login on that Windows user account.
+4. Future deployments use that saved login automatically.
+
+Normal future deploy:
+    Double-click deploy-cloudflare.cmd
+
+The script will:
+- Check Node.js and npm.
+- Install the local Wrangler dependency if needed.
+- Reuse your existing saved Cloudflare login.
+- Deploy relay-cloudflare to Cloudflare.
+
+IMPORTANT:
+- Do not put API tokens, Global API Keys, passwords, or other secrets in this repository.
+- Do not commit a .env file containing Cloudflare credentials.
+- A relay-only Cloudflare deployment does not require rebuilding the Android APK.
+- If Cloudflare login is ever manually revoked or expires, the CMD will simply ask you to sign in through the browser again.
