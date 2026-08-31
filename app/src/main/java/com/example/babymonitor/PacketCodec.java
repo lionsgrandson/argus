@@ -11,6 +11,7 @@ final class PacketCodec {
     static final byte TYPE_AUDIO = 1;
     static final byte TYPE_STATUS = 2;
     static final byte TYPE_VIDEO_JPEG = 3;
+    static final byte TYPE_STREAM_CONTROL = 4;
     private static final int HEADER = 18;
     private final SecretKeySpec key;
 
