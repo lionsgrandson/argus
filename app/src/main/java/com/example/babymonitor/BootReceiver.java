@@ -29,8 +29,6 @@ public class BootReceiver extends BroadcastReceiver {
         Context appContext = context.getApplicationContext();
         UserManager userManager = (UserManager) appContext.getSystemService(Context.USER_SERVICE);
         if (userManager != null && !userManager.isUserUnlocked()) {
-            // Pairing and desired mode are in credential-encrypted storage.
-            // USER_UNLOCKED will arrive after the first unlock.
             return;
         }
 
@@ -48,19 +46,12 @@ public class BootReceiver extends BroadcastReceiver {
     }
 
     private void resumeAfterRestart(Context context, String mode) {
-        // Rooted path: if ARGUS has already been granted su access, root launches
-        // the normal resume Activity after unlock. The Activity starts the same
-        // foreground camera/microphone service used during an ordinary manual start.
-        // Once started, ARGUS continues running when the screen is locked or the
-        // user leaves the Activity.
         String resumeAction = "baby".equals(mode) ? ACTION_RESUME_BABY : ACTION_RESUME_PARENT;
         if (RootSupport.tryLaunchResumeActivity(context, resumeAction)) {
             cancelResumeNotification(context);
             return;
         }
 
-        // Non-rooted compatibility path. Android 10 and older can resume the
-        // camera/microphone foreground service directly from reboot.
         if ("baby".equals(mode) && Build.VERSION.SDK_INT < 30) {
             if (tryStart(context, SenderService.class)) {
                 cancelResumeNotification(context);
@@ -68,8 +59,6 @@ public class BootReceiver extends BroadcastReceiver {
             }
         }
 
-        // Parent listening does not require while-in-use camera/microphone access,
-        // so normal boot auto-resume remains possible through Android 14.
         if ("parent".equals(mode) && Build.VERSION.SDK_INT < 35) {
             if (tryStart(context, ReceiverService.class)) {
                 cancelResumeNotification(context);
@@ -77,8 +66,6 @@ public class BootReceiver extends BroadcastReceiver {
             }
         }
 
-        // Current non-root Android requires user interaction before a background
-        // app can start camera/microphone capture after reboot.
         postResumeNotification(context, mode);
     }
 
@@ -98,10 +85,10 @@ public class BootReceiver extends BroadcastReceiver {
         if (Build.VERSION.SDK_INT >= 26) {
             NotificationChannel channel = new NotificationChannel(
                     CHANNEL_ID,
-                    "ARGUS restart",
+                    "הפעלה מחדש של ARGUS",
                     NotificationManager.IMPORTANCE_HIGH
             );
-            channel.setDescription("Resume ARGUS after a phone restart when Android requires user interaction");
+            channel.setDescription("חידוש הפעילות של ARGUS לאחר הפעלה מחדש של הטלפון");
             nm.createNotificationChannel(channel);
         }
 
@@ -115,14 +102,14 @@ public class BootReceiver extends BroadcastReceiver {
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT
         );
 
-        String label = "baby".equals(mode) ? "Child transmission" : "Parent listener";
+        String label = "baby".equals(mode) ? "שידור טלפון הילד" : "האזנת טלפון ההורה";
         Notification.Builder builder = Build.VERSION.SDK_INT >= 26
                 ? new Notification.Builder(context, CHANNEL_ID)
                 : new Notification.Builder(context);
         Notification notification = builder
                 .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
-                .setContentTitle("Resume ARGUS")
-                .setContentText("Phone restarted — tap to resume " + label + ".")
+                .setContentTitle("חידוש ARGUS")
+                .setContentText("הטלפון הופעל מחדש. לחצו כדי לחדש את " + label)
                 .setContentIntent(pi)
                 .setAutoCancel(true)
                 .build();
