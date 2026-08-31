@@ -29,6 +29,7 @@ public class MainActivity extends Activity {
     private static final String ROLE_PREF = "setup_role";
 
     private EditText relayUrl;
+    private EditText manualPairingCode;
     private TextView babyState;
     private TextView parentState;
     private TextView batteryState;
@@ -172,7 +173,7 @@ public class MainActivity extends Activity {
 
         babyPanel.addView(sectionTitle("Connect the Parent phone"), spaced(0, dp(22), 0, dp(6)));
         babyPanel.addView(text(
-                "On the Parent phone, open ARGUS and tap “Scan Child QR”.",
+                "Scan the QR on the Parent phone. If QR does not work, copy or share the pairing code instead.",
                 14, Color.rgb(92, 99, 109), Gravity.START
         ), spaced(0, 0, 0, dp(12)));
 
@@ -186,15 +187,19 @@ public class MainActivity extends Activity {
         babyPanel.addView(pairingQrView, qrP);
 
         TextView qrHint = text(
-                "No codes to type or copy.",
+                "QR is fastest. Pairing code works on every phone.",
                 13, Color.rgb(97, 104, 114), Gravity.CENTER
         );
         babyPanel.addView(qrHint, spaced(0, dp(8), 0, dp(10)));
 
-        Button shareLink = button("Share setup link");
+        Button copyCode = primaryButton("COPY PAIRING CODE");
+        copyCode.setOnClickListener(v -> copyPairingCode());
+        babyPanel.addView(copyCode,
+                new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(54)));
+
+        Button shareLink = button("Share pairing code");
         shareLink.setOnClickListener(v -> sharePairingLink());
-        babyPanel.addView(shareLink,
-                new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(50)));
+        babyPanel.addView(shareLink, spacedHeight(dp(8), dp(50)));
 
         root.addView(babyPanel, matchWrap());
 
@@ -214,16 +219,38 @@ public class MainActivity extends Activity {
                 new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(58)));
 
         parentPanel.addView(text(
-                "Point the camera at the QR shown on the Child phone. ARGUS connects automatically.",
+                "Point the camera at the QR shown on the Child phone.",
                 13, Color.rgb(97, 104, 114), Gravity.START
-        ), spaced(0, dp(8), 0, dp(16)));
+        ), spaced(0, dp(8), 0, dp(14)));
+
+        parentPanel.addView(sectionTitle("QR not working?"), spaced(0, dp(4), 0, dp(4)));
+        parentPanel.addView(text(
+                "On the Child phone tap Copy pairing code or Share pairing code, then paste the code here.",
+                13, Color.rgb(97, 104, 114), Gravity.START
+        ), spaced(0, 0, 0, dp(8)));
+
+        manualPairingCode = new EditText(this);
+        manualPairingCode.setHint("Paste pairing code here");
+        manualPairingCode.setTextSize(14);
+        manualPairingCode.setSingleLine(false);
+        manualPairingCode.setMaxLines(4);
+        manualPairingCode.setInputType(
+                InputType.TYPE_CLASS_TEXT
+                        | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                        | InputType.TYPE_TEXT_FLAG_MULTI_LINE
+        );
+        parentPanel.addView(manualPairingCode, spaced(0, 0, 0, dp(8)));
+
+        Button connectCode = primaryButton("CONNECT WITH CODE");
+        connectCode.setOnClickListener(v -> connectManualCode());
+        parentPanel.addView(connectCode,
+                new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(54)));
 
         videoView = new ImageView(this);
         videoView.setScaleType(ImageView.ScaleType.CENTER_CROP);
         videoView.setBackgroundColor(Color.rgb(225, 228, 233));
         videoView.setContentDescription("Live child-room camera");
-        parentPanel.addView(videoView,
-                new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(240)));
+        parentPanel.addView(videoView, spacedHeight(dp(16), dp(240)));
 
         videoState = text("Waiting for camera…", 13, Color.rgb(92, 99, 109), Gravity.CENTER);
         parentPanel.addView(videoState, spaced(0, dp(8), 0, dp(10)));
@@ -387,6 +414,20 @@ public class MainActivity extends Activity {
                 .toString();
     }
 
+    private void copyPairingCode() {
+        PairingConfig p = ensurePairing();
+        if (p == null) return;
+
+        ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        if (clipboard == null) {
+            Toast.makeText(this, "Could not access clipboard", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        clipboard.setPrimaryClip(ClipData.newPlainText("ARGUS pairing code", p.encode()));
+        Toast.makeText(this, "Pairing code copied", Toast.LENGTH_SHORT).show();
+    }
+
     private void sharePairingLink() {
         PairingConfig p = ensurePairing();
         if (p == null) return;
@@ -395,9 +436,22 @@ public class MainActivity extends Activity {
         send.setType("text/plain");
         send.putExtra(
                 Intent.EXTRA_TEXT,
-                "Tap this on the Parent phone to connect ARGUS:\n" + pairingLink(p)
+                "ARGUS pairing code:\n" + p.encode()
+                        + "\n\nPaste this code into ARGUS on the Parent phone."
         );
-        startActivity(Intent.createChooser(send, "Send ARGUS setup link"));
+        startActivity(Intent.createChooser(send, "Send ARGUS pairing code"));
+    }
+
+    private void connectManualCode() {
+        if (manualPairingCode == null) return;
+
+        String value = manualPairingCode.getText().toString().trim();
+        if (value.isEmpty()) {
+            Toast.makeText(this, "Paste the Child phone pairing code first", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        acceptPairingPayload(value, true);
     }
 
     private void scanPairingQr() {
@@ -426,7 +480,7 @@ public class MainActivity extends Activity {
                         scanInProgress = false;
                         Toast.makeText(
                                 this,
-                                "Could not open the QR scanner. Try again in a moment.",
+                                "Could not open the QR scanner. Use the pairing code below instead.",
                                 Toast.LENGTH_LONG
                         ).show();
                     });
@@ -434,7 +488,7 @@ public class MainActivity extends Activity {
             scanInProgress = false;
             Toast.makeText(
                     this,
-                    "Could not open the QR scanner. Try again in a moment.",
+                    "Could not open the QR scanner. Use the pairing code below instead.",
                     Toast.LENGTH_LONG
             ).show();
         }
@@ -460,28 +514,52 @@ public class MainActivity extends Activity {
         String code = payload == null ? "" : payload.trim();
 
         try {
-            if (code.regionMatches(true, 0, "argus://", 0, 8)) {
-                Uri uri = Uri.parse(code);
+            int argusIndex = code.indexOf("argus://");
+            if (argusIndex >= 0) {
+                String link = code.substring(argusIndex).trim();
+                int whitespace = firstWhitespace(link);
+                if (whitespace > 0) link = link.substring(0, whitespace);
+
+                Uri uri = Uri.parse(link);
                 if (!"argus".equalsIgnoreCase(uri.getScheme())
                         || !"pair".equalsIgnoreCase(uri.getHost())) {
                     throw new IllegalArgumentException("Wrong ARGUS QR type");
                 }
                 code = uri.getQueryParameter("code");
+            } else {
+                String marker = "ARGUS pairing code:";
+                int markerIndex = code.indexOf(marker);
+                if (markerIndex >= 0) {
+                    code = code.substring(markerIndex + marker.length()).trim();
+                    int whitespace = firstWhitespace(code);
+                    if (whitespace > 0) code = code.substring(0, whitespace);
+                }
             }
 
-            if (code == null || code.trim().isEmpty()) throw new IllegalArgumentException("Empty code");
+            if (code == null || code.trim().isEmpty()) {
+                throw new IllegalArgumentException("Empty code");
+            }
 
             PairingConfig p = PairingConfig.parse(code.trim());
             AppPrefs.savePairing(this, p);
             AppPrefs.prefs(this).edit().putString(ROLE_PREF, "parent").apply();
             showRole("parent");
 
+            if (manualPairingCode != null) manualPairingCode.setText("");
+
             Toast.makeText(this, "Connected to the Child phone", Toast.LENGTH_SHORT).show();
 
             if (autoStart) handler.postDelayed(this::startParent, 400);
         } catch (Exception e) {
-            Toast.makeText(this, "That QR/link is not a valid ARGUS pairing", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "That is not a valid ARGUS pairing code", Toast.LENGTH_LONG).show();
         }
+    }
+
+    private int firstWhitespace(String value) {
+        for (int i = 0; i < value.length(); i++) {
+            if (Character.isWhitespace(value.charAt(i))) return i;
+        }
+        return -1;
     }
 
     private void rotatePairing() {
@@ -538,7 +616,7 @@ public class MainActivity extends Activity {
         if (!validRelay()) return;
 
         if (AppPrefs.pairing(this) == null) {
-            Toast.makeText(this, "Scan the Child phone QR first", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Scan the Child QR or enter its pairing code first", Toast.LENGTH_LONG).show();
             return;
         }
 
@@ -630,7 +708,7 @@ public class MainActivity extends Activity {
             parentPairingState.setText(
                     paired
                             ? "Paired with Child phone"
-                            : "Not connected yet — scan the Child QR"
+                            : "Not connected yet — scan QR or enter pairing code"
             );
             parentPairingState.setTextColor(
                     paired ? Color.rgb(37, 105, 75) : Color.rgb(92, 99, 109)
