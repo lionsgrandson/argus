@@ -103,6 +103,7 @@ public class MainActivity extends Activity {
         ScrollView scroll = new ScrollView(this);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
+        root.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         root.setPadding(dp(20), dp(18), dp(20), dp(28));
         root.setBackgroundColor(Color.WHITE);
         scroll.addView(root);
@@ -127,15 +128,15 @@ public class MainActivity extends Activity {
 
     private void buildRoleChooser(LinearLayout root) {
         roleChooser = panel();
-        TextView question = text("Which phone is this?", 22, Color.rgb(28, 32, 39), Gravity.CENTER);
+        TextView question = text("איזה טלפון זה?", 22, Color.rgb(28, 32, 39), Gravity.CENTER);
         question.setTypeface(null, android.graphics.Typeface.BOLD);
         roleChooser.addView(question, spaced(0, 0, 0, dp(18)));
 
-        Button parent = primaryButton("PARENT PHONE");
+        Button parent = primaryButton("טלפון הורה");
         parent.setOnClickListener(v -> selectRole("parent"));
         roleChooser.addView(parent, height(dp(64)));
 
-        Button child = primaryButton("CHILD PHONE");
+        Button child = primaryButton("טלפון ילד");
         child.setOnClickListener(v -> selectRole("baby"));
         roleChooser.addView(child, spacedHeight(dp(10), dp(64)));
 
@@ -144,10 +145,10 @@ public class MainActivity extends Activity {
 
     private void buildSetupPanel(LinearLayout root) {
         setupPanel = panel();
-        setupRoleTitle = heading("SETUP");
+        setupRoleTitle = heading("הגדרה");
         setupPanel.addView(setupRoleTitle, spaced(0, 0, 0, dp(8)));
 
-        setupStatus = text("Not paired", 15, Color.rgb(170, 50, 50), Gravity.CENTER);
+        setupStatus = text("לא מחובר", 15, Color.rgb(170, 50, 50), Gravity.CENTER);
         setupStatus.setTypeface(null, android.graphics.Typeface.BOLD);
         setupPanel.addView(setupStatus, spaced(0, 0, 0, dp(16)));
 
@@ -155,12 +156,12 @@ public class MainActivity extends Activity {
         pairingControls.setOrientation(LinearLayout.VERTICAL);
         setupPanel.addView(pairingControls, matchWrap());
 
-        setupPanel.addView(sectionTitle("Permissions"), spaced(0, dp(20), 0, dp(8)));
+        setupPanel.addView(sectionTitle("הרשאות"), spaced(0, dp(20), 0, dp(8)));
         permissionList = new LinearLayout(this);
         permissionList.setOrientation(LinearLayout.VERTICAL);
         setupPanel.addView(permissionList, matchWrap());
 
-        Button changeRole = button("Change phone type");
+        Button changeRole = button("שינוי סוג הטלפון");
         changeRole.setOnClickListener(v -> changePhoneRole());
         setupPanel.addView(changeRole, spaced(0, dp(20), 0, 0));
 
@@ -173,12 +174,12 @@ public class MainActivity extends Activity {
         livePanel.setPadding(dp(8), dp(8), dp(8), dp(12));
         livePanel.setBackgroundColor(Color.WHITE);
 
-        liveConnection = text("NOT CONNECTED", 16, Color.WHITE, Gravity.CENTER);
+        liveConnection = text("לא מחובר", 16, Color.WHITE, Gravity.CENTER);
         liveConnection.setTypeface(null, android.graphics.Typeface.BOLD);
         liveConnection.setPadding(dp(12), dp(10), dp(12), dp(10));
         livePanel.addView(liveConnection, spaced(0, 0, 0, dp(18)));
 
-        liveMainText = text("TRANSMITTING", 28, Color.rgb(28, 32, 39), Gravity.CENTER);
+        liveMainText = text("משדר", 28, Color.rgb(28, 32, 39), Gravity.CENTER);
         liveMainText.setTypeface(null, android.graphics.Typeface.BOLD);
         livePanel.addView(liveMainText, spaced(0, dp(12), 0, dp(20)));
 
@@ -188,12 +189,12 @@ public class MainActivity extends Activity {
         mediaControls.setBackgroundColor(Color.rgb(245, 246, 248));
 
         cameraSwitch = new Switch(this);
-        cameraSwitch.setText("Transmit camera");
+        cameraSwitch.setText("מצלמה");
         cameraSwitch.setTextSize(17);
         mediaControls.addView(cameraSwitch, matchWrap());
 
         micSwitch = new Switch(this);
-        micSwitch.setText("Transmit microphone");
+        micSwitch.setText("מיקרופון");
         micSwitch.setTextSize(17);
         mediaControls.addView(micSwitch, spaced(0, dp(8), 0, 0));
 
@@ -209,25 +210,25 @@ public class MainActivity extends Activity {
         videoView = new ImageView(this);
         videoView.setScaleType(ImageView.ScaleType.CENTER_CROP);
         videoView.setBackgroundColor(Color.rgb(230, 232, 235));
-        videoView.setContentDescription("Live Child phone camera");
+        videoView.setContentDescription("מצלמת טלפון הילד בשידור חי");
         livePanel.addView(videoView, height(dp(340)));
 
-        audioOnlyState = text("AUDIO LIVE", 24, Color.rgb(35, 90, 67), Gravity.CENTER);
+        audioOnlyState = text("מיקרופון פעיל", 24, Color.rgb(35, 90, 67), Gravity.CENTER);
         audioOnlyState.setTypeface(null, android.graphics.Typeface.BOLD);
         audioOnlyState.setPadding(dp(12), dp(90), dp(12), dp(90));
         audioOnlyState.setBackgroundColor(Color.rgb(246, 247, 249));
         livePanel.addView(audioOnlyState, matchWrap());
 
-        batteryState = text("Child battery: --", 19, Color.rgb(37, 72, 60), Gravity.CENTER);
+        batteryState = text("סוללת הילד: --", 19, Color.rgb(37, 72, 60), Gravity.CENTER);
         batteryState.setTypeface(null, android.graphics.Typeface.BOLD);
         batteryState.setPadding(dp(12), dp(14), dp(12), dp(14));
         livePanel.addView(batteryState, spaced(0, dp(12), 0, dp(12)));
 
-        liveStartStop = primaryButton("STOP");
+        liveStartStop = primaryButton("עצור");
         liveStartStop.setOnClickListener(v -> toggleLive());
         livePanel.addView(liveStartStop, height(dp(58)));
 
-        Button changeRole = button("Change phone type");
+        Button changeRole = button("שינוי סוג הטלפון");
         changeRole.setOnClickListener(v -> changePhoneRole());
         livePanel.addView(changeRole, spaced(0, dp(12), 0, 0));
 
@@ -285,30 +286,30 @@ public class MainActivity extends Activity {
 
     private void renderSetup(String role) {
         boolean child = "baby".equals(role);
-        setupRoleTitle.setText(child ? "CHILD PHONE" : "PARENT PHONE");
-        setupStatus.setText(child ? "WAITING FOR PARENT" : "NOT PAIRED");
+        setupRoleTitle.setText(child ? "טלפון ילד" : "טלפון הורה");
+        setupStatus.setText(child ? "ממתין לטלפון ההורה" : "לא מחובר");
         setupStatus.setTextColor(Color.rgb(170, 50, 50));
 
         pairingControls.removeAllViews();
         if (child) {
-            pairingControls.addView(text("Scan this QR on the Parent phone", 16,
+            pairingControls.addView(text("סרקו את קוד ה QR הזה בטלפון ההורה", 16,
                     Color.rgb(55, 60, 69), Gravity.CENTER), spaced(0, 0, 0, dp(10)));
 
             pairingQrView = new ImageView(this);
             pairingQrView.setAdjustViewBounds(true);
             pairingQrView.setScaleType(ImageView.ScaleType.FIT_CENTER);
             pairingQrView.setBackgroundColor(Color.WHITE);
-            pairingQrView.setContentDescription("ARGUS pairing QR");
+            pairingQrView.setContentDescription("קוד QR לחיבור ARGUS");
             pairingControls.addView(pairingQrView, height(dp(260)));
             renderPairingQr();
 
-            Button refreshQr = button("Refresh QR code for debugging");
+            Button refreshQr = button("רענון קוד QR לבדיקה");
             refreshQr.setOnClickListener(v -> rotatePairing());
             pairingControls.addView(refreshQr, spaced(0, dp(10), 0, 0));
         } else {
-            pairingControls.addView(text("Scan the QR shown on the Child phone", 16,
+            pairingControls.addView(text("סרקו את קוד ה QR שמופיע בטלפון הילד", 16,
                     Color.rgb(55, 60, 69), Gravity.CENTER), spaced(0, 0, 0, dp(12)));
-            Button scan = primaryButton("SCAN QR CODE");
+            Button scan = primaryButton("סריקת קוד QR");
             scan.setOnClickListener(v -> scanPairingQr());
             pairingControls.addView(scan, height(dp(60)));
         }
@@ -319,18 +320,18 @@ public class MainActivity extends Activity {
     private void renderPermissions(String role) {
         permissionList.removeAllViews();
         if ("baby".equals(role)) {
-            addPermissionRow("Camera", hasPermission(Manifest.permission.CAMERA),
+            addPermissionRow("מצלמה", hasPermission(Manifest.permission.CAMERA),
                     () -> requestPermissions(new String[]{Manifest.permission.CAMERA}, REQ_CHILD_PERMS));
-            addPermissionRow("Microphone", hasPermission(Manifest.permission.RECORD_AUDIO),
+            addPermissionRow("מיקרופון", hasPermission(Manifest.permission.RECORD_AUDIO),
                     () -> requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQ_CHILD_PERMS));
         }
 
         if (Build.VERSION.SDK_INT >= 33) {
-            addPermissionRow("Notifications", hasPermission(Manifest.permission.POST_NOTIFICATIONS),
+            addPermissionRow("התראות", hasPermission(Manifest.permission.POST_NOTIFICATIONS),
                     () -> requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIF));
         }
 
-        addPermissionRow("Background battery access", batteryAccessActive(), this::openBatterySettings);
+        addPermissionRow("פעילות ברקע", batteryAccessActive(), this::openBatterySettings);
     }
 
     private void addPermissionRow(String label, boolean active, Runnable action) {
@@ -345,7 +346,7 @@ public class MainActivity extends Activity {
                 LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
         row.addView(name, nameParams);
 
-        Button state = button(active ? "ACTIVE" : "ALLOW");
+        Button state = button(active ? "פעיל" : "אפשר");
         state.setEnabled(!active);
         if (!active) state.setOnClickListener(v -> action.run());
         row.addView(state, new LinearLayout.LayoutParams(dp(100), dp(44)));
@@ -386,7 +387,7 @@ public class MainActivity extends Activity {
             AppPrefs.savePairing(this, p);
             return p;
         } catch (Exception e) {
-            Toast.makeText(this, "Could not create pairing QR", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "לא ניתן ליצור קוד QR לחיבור", Toast.LENGTH_LONG).show();
             return null;
         }
     }
@@ -432,9 +433,9 @@ public class MainActivity extends Activity {
             AppPrefs.setMode(this, "none");
             renderPairingQr();
             handler.postDelayed(this::startBaby, 250);
-            Toast.makeText(this, "New QR created", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "נוצר קוד QR חדש", Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
-            Toast.makeText(this, "Could not refresh QR", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "לא ניתן לרענן את קוד ה QR", Toast.LENGTH_LONG).show();
         }
     }
 
@@ -452,7 +453,7 @@ public class MainActivity extends Activity {
                         scanInProgress = false;
                         String raw = barcode.getRawValue();
                         if (raw == null || raw.trim().isEmpty()) {
-                            Toast.makeText(this, "No QR data found", Toast.LENGTH_LONG).show();
+                            Toast.makeText(this, "לא נמצא מידע בקוד ה QR", Toast.LENGTH_LONG).show();
                             return;
                         }
                         acceptPairingPayload(raw);
@@ -460,11 +461,11 @@ public class MainActivity extends Activity {
                     .addOnCanceledListener(() -> scanInProgress = false)
                     .addOnFailureListener(e -> {
                         scanInProgress = false;
-                        Toast.makeText(this, "Could not scan QR", Toast.LENGTH_LONG).show();
+                        Toast.makeText(this, "לא ניתן לסרוק את קוד ה QR", Toast.LENGTH_LONG).show();
                     });
         } catch (RuntimeException e) {
             scanInProgress = false;
-            Toast.makeText(this, "Could not scan QR", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "לא ניתן לסרוק את קוד ה QR", Toast.LENGTH_LONG).show();
         }
     }
 
@@ -489,11 +490,11 @@ public class MainActivity extends Activity {
             AppPrefs.savePairing(this, p);
             AppPrefs.setPairConfirmed(this, true);
             AppPrefs.prefs(this).edit().putString(ROLE_PREF, "parent").apply();
-            Toast.makeText(this, "Phones paired", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "הטלפונים חוברו", Toast.LENGTH_SHORT).show();
             startParent();
             showCurrentScreen();
         } catch (Exception e) {
-            Toast.makeText(this, "Invalid ARGUS QR", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "קוד ה QR של ARGUS אינו תקין", Toast.LENGTH_LONG).show();
         }
     }
 
@@ -567,10 +568,10 @@ public class MainActivity extends Activity {
     private void renderLive(String role) {
         boolean child = "baby".equals(role);
         boolean online = AppPrefs.peerOnline(this, role);
-        liveConnection.setText(online ? "CONNECTED" : "NOT CONNECTED");
+        liveConnection.setText(online ? "מחובר" : "לא מחובר");
         liveConnection.setBackgroundColor(online ? Color.rgb(39, 145, 84) : Color.rgb(190, 57, 57));
 
-        liveMainText.setText(child ? "TRANSMITTING" : "PARENT PHONE");
+        liveMainText.setText(child ? "משדר" : "טלפון הורה");
         cameraSwitch.setVisibility(child ? View.GONE : View.VISIBLE);
         micSwitch.setVisibility(child ? View.GONE : View.VISIBLE);
 
@@ -582,7 +583,14 @@ public class MainActivity extends Activity {
         audioOnlyState.setVisibility(child ? View.GONE : View.VISIBLE);
 
         boolean running = child ? "baby".equals(AppPrefs.mode(this)) : "parent".equals(AppPrefs.mode(this));
-        liveStartStop.setText(running ? (child ? "STOP TRANSMITTING" : "STOP") : (child ? "START TRANSMITTING" : "START"));
+        liveStartStop.setText(running ? (child ? "עצור שידור" : "עצור") : (child ? "התחל שידור" : "התחל"));
+        if (!child && running) {
+            liveStartStop.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(190, 57, 57)));
+            liveStartStop.setTextColor(Color.WHITE);
+        } else {
+            liveStartStop.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(224, 224, 224)));
+            liveStartStop.setTextColor(Color.rgb(28, 32, 39));
+        }
 
         if (!child) {
             updatingSwitches = true;
@@ -616,16 +624,16 @@ public class MainActivity extends Activity {
         } else {
             videoView.setVisibility(View.GONE);
             audioOnlyState.setVisibility(View.VISIBLE);
-            audioOnlyState.setText(mic ? "AUDIO LIVE" : "TRANSMISSION PAUSED");
+            audioOnlyState.setText(mic ? "מיקרופון פעיל" : "השידור מושהה");
         }
 
         int pct = AppPrefs.prefs(this).getInt("baby_battery", -1);
         boolean charging = AppPrefs.prefs(this).getBoolean("baby_charging", false);
         if (pct >= 0) {
-            batteryState.setText("Child battery: " + pct + "%" + (charging ? "  Charging" : ""));
+            batteryState.setText("סוללת הילד: " + pct + "%" + (charging ? "  בטעינה" : ""));
             batteryState.setTextColor(pct <= 20 ? Color.rgb(177, 53, 53) : Color.rgb(37, 72, 60));
         } else {
-            batteryState.setText("Child battery: --");
+            batteryState.setText("סוללת הילד: --");
             batteryState.setTextColor(Color.rgb(92, 99, 109));
         }
     }
