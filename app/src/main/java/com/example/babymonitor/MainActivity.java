@@ -46,6 +46,7 @@ public class MainActivity extends Activity {
     private long displayedVideoAt = 0L;
     private boolean scanInProgress = false;
     private boolean updatingSwitches = false;
+    private String renderedSetupRole = "";
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable refreshTask = new Runnable() {
@@ -75,10 +76,12 @@ public class MainActivity extends Activity {
         if (BootReceiver.ACTION_RESUME_BABY.equals(action)) {
             getIntent().setAction(null);
             AppPrefs.prefs(this).edit().putString(ROLE_PREF, "baby").apply();
+            renderedSetupRole = "";
             showCurrentScreen();
         } else if (BootReceiver.ACTION_RESUME_PARENT.equals(action)) {
             getIntent().setAction(null);
             AppPrefs.prefs(this).edit().putString(ROLE_PREF, "parent").apply();
+            renderedSetupRole = "";
             showCurrentScreen();
         }
 
@@ -236,6 +239,7 @@ public class MainActivity extends Activity {
         AppPrefs.setPairConfirmed(this, false);
         AppPrefs.setPeerOnline(this, "baby", false);
         AppPrefs.setPeerOnline(this, "parent", false);
+        renderedSetupRole = "";
 
         if ("baby".equals(role)) {
             ensurePairing();
@@ -259,13 +263,19 @@ public class MainActivity extends Activity {
             return;
         }
 
-        roleChooser.setVisibility(View.GONE);
         boolean paired = isPairedForUi(role);
+        boolean needsSetupRender = !paired
+                && (setupPanel.getVisibility() != View.VISIBLE || !role.equals(renderedSetupRole));
+
+        roleChooser.setVisibility(View.GONE);
         setupPanel.setVisibility(paired ? View.GONE : View.VISIBLE);
         livePanel.setVisibility(paired ? View.VISIBLE : View.GONE);
 
-        if (!paired) renderSetup(role);
-        else renderLive(role);
+        if (needsSetupRender) {
+            renderSetup(role);
+            renderedSetupRole = role;
+        }
+        if (paired) renderLive(role);
     }
 
     private boolean isPairedForUi(String role) {
@@ -639,6 +649,7 @@ public class MainActivity extends Activity {
         AppPrefs.setMode(this, "none");
         AppPrefs.clearPairing(this);
         AppPrefs.prefs(this).edit().remove(ROLE_PREF).apply();
+        renderedSetupRole = "";
         showCurrentScreen();
     }
 
