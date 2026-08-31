@@ -1,9 +1,12 @@
 import { DurableObject } from "cloudflare:workers";
 
-// Camera frames are JPEGs at roughly 640x480 / low quality. Keep hard limits so
-// a broken or malicious client still cannot turn a room into an unbounded relay.
+// ARGUS pairing rule:
+// Once the two phones share the QR pairing credentials, that room stays paired.
+// There is no server-side expiry, login, approval step, or re-pair requirement.
+// If either phone loses internet, it can reconnect to the same room with the same
+// credentials as many times as needed.
 const MAX_FRAME_BYTES = 768 * 1024;
-const MAX_BYTES_PER_10S = 8 * 1024 * 1024;
+const MAX_BYTES_PER_10S = 32 * 1024 * 1024;
 
 function validToken(value, min, max) {
   return typeof value === "string" && value.length >= min && value.length <= max && /^[A-Za-z0-9_-]+$/.test(value);
@@ -28,25 +31,42 @@ function wsAttachment(ws) {
   }
 }
 
+function roomHint(roomId) {
+  return roomId ? roomId.slice(0, 6) : "none";
+}
+
+function logEvent(event, data = {}) {
+  console.log(JSON.stringify({ event, ...data, at: new Date().toISOString() }));
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
     if (url.pathname === "/health") {
       return Response.json(
-        { ok: true, protocol: 2, relay: "cloudflare-durable-object", audio: true, video: true },
+        {
+          ok: true,
+          protocol: 2,
+          relay: "cloudflare-durable-object",
+          pairing: "persistent",
+          reconnect: true,
+          audio: true,
+          video: true,
+        },
         { headers: { "cache-control": "no-store" } },
       );
     }
 
     if (url.pathname !== "/ws") {
-      return new Response("Baby Monitor relay. Use WebSocket /ws.", {
+      return new Response("ARGUS relay. Use WebSocket /ws.", {
         status: 404,
         headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
       });
     }
 
     if (request.method !== "GET" || (request.headers.get("Upgrade") || "").toLowerCase() !== "websocket") {
+      logEvent("upgrade_required");
       return new Response("WebSocket upgrade required", { status: 426 });
     }
 
@@ -54,11 +74,26 @@ export default {
     const role = url.searchParams.get("role") || "";
     const version = url.searchParams.get("v") || "";
     const auth = authFrom(request);
+    const hint = roomHint(roomId);
 
-    if (!validToken(roomId, 12, 32) || !validToken(auth, 16, 64) || !["baby", "parent"].includes(role) || version !== "2") {
+    if (!validToken(roomId, 12, 32)) {
+      logEvent("connection_rejected", { reason: "invalid_room", role, room: hint });
+      return new Response("Unauthorized", { status: 401 });
+    }
+    if (!validToken(auth, 16, 64)) {
+      logEvent("connection_rejected", { reason: "invalid_auth", role, room: hint });
+      return new Response("Unauthorized", { status: 401 });
+    }
+    if (!["baby", "parent"].includes(role)) {
+      logEvent("connection_rejected", { reason: "invalid_role", role, room: hint });
+      return new Response("Unauthorized", { status: 401 });
+    }
+    if (version !== "2") {
+      logEvent("connection_rejected", { reason: "protocol_version", role, room: hint, version });
       return new Response("Unauthorized", { status: 401 });
     }
 
+    logEvent("connection_attempt", { role, room: hint });
     const stub = env.ROOMS.getByName(roomId);
     return stub.fetch(request);
   },
@@ -77,24 +112,40 @@ export class Room extends DurableObject {
 
   async fetch(request) {
     const url = new URL(request.url);
+    const roomId = url.searchParams.get("room") || "";
     const role = url.searchParams.get("role") || "";
     const auth = authFrom(request);
+    const hint = roomHint(roomId);
 
     if (!["baby", "parent"].includes(role) || !validToken(auth, 16, 64)) {
+      logEvent("room_connection_rejected", { role, room: hint, reason: "invalid_credentials" });
       return new Response("Unauthorized", { status: 401 });
     }
 
     const suppliedHash = await sha256Hex(auth);
     const storedHash = await this.ctx.storage.get("authHash");
+
     if (storedHash && storedHash !== suppliedHash) {
+      logEvent("room_connection_rejected", { role, room: hint, reason: "pairing_mismatch" });
       return new Response("Unauthorized", { status: 401 });
     }
-    if (!storedHash) await this.ctx.storage.put("authHash", suppliedHash);
 
+    // First valid phone permanently claims this random room with the QR auth token.
+    // The value is intentionally never expired so normal disconnects, reboots,
+    // Wi-Fi changes, mobile-data changes, and app restarts never require pairing again.
+    if (!storedHash) {
+      await this.ctx.storage.put("authHash", suppliedHash);
+      await this.ctx.storage.put("pairedAt", Date.now());
+      logEvent("room_paired", { role, room: hint });
+    }
+
+    // A reconnect from the same phone role replaces only its stale socket.
+    // It does not alter or reset the pairing.
     for (const [socket, session] of this.sessions) {
       if (session.role === role) {
-        try { socket.close(4001, "Replaced by new same-role connection"); } catch {}
+        try { socket.close(4001, "Replaced by reconnect"); } catch {}
         this.sessions.delete(socket);
+        logEvent("stale_connection_replaced", { role, room: hint });
       }
     }
 
@@ -104,6 +155,7 @@ export class Room extends DurableObject {
 
     const session = {
       role,
+      roomHint: hint,
       windowStarted: Date.now(),
       windowBytes: 0,
     };
@@ -122,8 +174,10 @@ export class Room extends DurableObject {
     if (other) {
       try { server.send("PEER:ONLINE"); } catch {}
       try { other.send("PEER:ONLINE"); } catch {}
+      logEvent("pair_online", { room: hint });
     } else {
       try { server.send("PEER:OFFLINE"); } catch {}
+      logEvent("phone_connected_waiting_for_peer", { role, room: hint });
     }
 
     return new Response(null, { status: 101, webSocket: client });
@@ -136,8 +190,7 @@ export class Room extends DurableObject {
 
     const size = message.byteLength;
     if (size > MAX_FRAME_BYTES) {
-      try { ws.close(4002, "Frame too large"); } catch {}
-      this.sessions.delete(ws);
+      logEvent("frame_rejected", { room: session.roomHint || "unknown", reason: "frame_too_large", bytes: size });
       return;
     }
 
@@ -147,11 +200,14 @@ export class Room extends DurableObject {
       session.windowBytes = 0;
     }
     session.windowBytes += size;
+
+    // Protect the relay from a broken client without destroying a valid pairing.
+    // A temporary burst is dropped; the WebSocket stays alive and can continue.
     if (session.windowBytes > MAX_BYTES_PER_10S) {
-      try { ws.close(4003, "Rate limit"); } catch {}
-      this.sessions.delete(ws);
+      logEvent("frame_rejected", { room: session.roomHint || "unknown", reason: "temporary_rate_limit" });
       return;
     }
+
     ws.serializeAttachment(session);
     this.sessions.set(ws, session);
 
@@ -165,13 +221,24 @@ export class Room extends DurableObject {
   async webSocketClose(ws, code, reason, wasClean) {
     const session = this.sessions.get(ws) || wsAttachment(ws);
     this.sessions.delete(ws);
+    logEvent("phone_disconnected", {
+      role: session?.role || "unknown",
+      room: session?.roomHint || "unknown",
+      code,
+      clean: Boolean(wasClean),
+    });
     try { ws.close(code || 1000, reason || "Closed"); } catch {}
     this.notifyOffline(session?.role);
   }
 
-  async webSocketError(ws) {
+  async webSocketError(ws, error) {
     const session = this.sessions.get(ws) || wsAttachment(ws);
     this.sessions.delete(ws);
+    logEvent("socket_error", {
+      role: session?.role || "unknown",
+      room: session?.roomHint || "unknown",
+      message: error?.message || "websocket error",
+    });
     this.notifyOffline(session?.role);
   }
 
