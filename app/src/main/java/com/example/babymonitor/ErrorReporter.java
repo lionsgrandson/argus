@@ -94,19 +94,19 @@ public final class ErrorReporter {
     public static void report(Context context, String role, String code, String userMessage, Throwable error) {
         if (context == null) return;
         String safeRole = role == null || role.isEmpty() ? "setup" : role;
-        String detail = technicalDetail(error);
-        AppPrefs.saveError(context, safeRole, code, userMessage, detail);
+        String rawDetail = technicalDetail(error);
+        AppPrefs.saveError(context, safeRole, code, userMessage, rawDetail);
         int count = AppPrefs.lastErrorCount(context);
         if ("baby".equals(safeRole) || "parent".equals(safeRole)) {
             AppPrefs.setPeerOnline(context, safeRole, false);
             AppPrefs.state(context, safeRole, "שגיאה " + code + ": " + userMessage);
         }
-        Log.e(TAG, code + " [" + safeRole + "] " + userMessage + (detail.isEmpty() ? "" : " | " + detail), error);
+        Log.e(TAG, code + " [" + safeRole + "] " + userMessage + (rawDetail.isEmpty() ? "" : " | " + rawDetail), error);
         if (count == 1) {
             new Handler(Looper.getMainLooper()).post(() ->
                     Toast.makeText(context.getApplicationContext(), "ARGUS " + code + ": " + userMessage, Toast.LENGTH_LONG).show());
         }
-        showNotification(context, safeRole, code, userMessage, detail);
+        showNotification(context, safeRole, code, userMessage, hebrewTechnicalSummary(error));
     }
 
     public static void report(String role, String code, String userMessage, Throwable error) {
@@ -135,14 +135,14 @@ public final class ErrorReporter {
         PendingIntent pi = PendingIntent.getActivity(context, notificationId(role), open,
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
 
-        String big = "קוד: " + code + "\n" + message;
+        String big = "קוד שגיאה: " + code + "\n" + message;
         if (!detail.isEmpty()) big += "\nפרטים: " + detail;
         int count = AppPrefs.lastErrorCount(context);
-        if (count > 1) big += "\nחזרות: " + count;
+        if (count > 1) big += "\nמספר חזרות: " + count;
 
         Notification notification = new Notification.Builder(context, CHANNEL)
                 .setSmallIcon(android.R.drawable.stat_notify_error)
-                .setContentTitle("ARGUS שגיאה " + code)
+                .setContentTitle("שגיאת ARGUS " + code)
                 .setContentText(message)
                 .setStyle(new Notification.BigTextStyle().bigText(big))
                 .setCategory(Notification.CATEGORY_ERROR)
@@ -167,6 +167,19 @@ public final class ErrorReporter {
         if ("parent".equals(role)) return NOTIF_PARENT;
         if ("baby".equals(role)) return NOTIF_BABY;
         return NOTIF_SETUP;
+    }
+
+    private static String hebrewTechnicalSummary(Throwable error) {
+        if (error == null) return "";
+        if (error instanceof UnknownHostException) return "לא ניתן לאתר את כתובת שרת החיבור";
+        if (error instanceof SocketTimeoutException) return "פג זמן ההמתנה לחיבור";
+        if (error instanceof SSLException) return "כשל באימות חיבור מאובטח";
+        if (error instanceof ConnectException) return "השרת אינו נגיש כרגע";
+        if (error instanceof EOFException) return "השרת סגר את החיבור באופן לא צפוי";
+        if (error instanceof SecurityException) return "בעיה בהרשאה או באבטחה";
+        if (error instanceof IllegalArgumentException) return "התקבל נתון שאינו תקין";
+        if (error instanceof IOException) return "אירעה שגיאת רשת";
+        return "אירעה תקלה פנימית באפליקציה";
     }
 
     private static String technicalDetail(Throwable error) {
