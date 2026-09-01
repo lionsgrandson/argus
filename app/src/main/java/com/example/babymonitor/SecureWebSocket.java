@@ -45,16 +45,7 @@ final class SecureWebSocket {
         String host = uri.getHost();
         int port = uri.getPort() > 0 ? uri.getPort() : 443;
 
-        Socket tcp = new Socket();
-        tcp.connect(new InetSocketAddress(host, port), 10000);
-        tcp.setSoTimeout(30000);
-        SSLSocketFactory sf = (SSLSocketFactory) SSLSocketFactory.getDefault();
-        SSLSocket ssl = (SSLSocket) sf.createSocket(tcp, host, port, true);
-        SSLParameters params = ssl.getSSLParameters();
-        params.setEndpointIdentificationAlgorithm("HTTPS");
-        ssl.setSSLParameters(params);
-        ssl.startHandshake();
-
+        SSLSocket ssl = connectTlsWithFallback(host, port);
         socket = ssl;
         in = new BufferedInputStream(ssl.getInputStream());
         out = new BufferedOutputStream(ssl.getOutputStream());
@@ -71,7 +62,7 @@ final class SecureWebSocket {
                 "Sec-WebSocket-Key: " + wsKey + "\r\n" +
                 "Sec-WebSocket-Version: 13\r\n" +
                 "Authorization: Bearer " + authToken + "\r\n" +
-                "User-Agent: BabyMonitorAndroid/2\r\n\r\n";
+                "User-Agent: ARGUSAndroid/3\r\n\r\n";
         out.write(request.getBytes(StandardCharsets.US_ASCII));
         out.flush();
 
@@ -88,11 +79,11 @@ final class SecureWebSocket {
 
         open = true;
         listener.onOpen();
-        Thread reader = new Thread(this::readLoop, "BabyMonitorWS");
+        Thread reader = new Thread(this::readLoop, "ArgusWS");
         reader.setDaemon(true);
         reader.start();
 
-        Thread heartbeat = new Thread(this::heartbeatLoop, "BabyMonitorWSHeartbeat");
+        Thread heartbeat = new Thread(this::heartbeatLoop, "ArgusWSHeartbeat");
         heartbeat.setDaemon(true);
         heartbeat.start();
     }
@@ -108,6 +99,34 @@ final class SecureWebSocket {
         open = false;
         try { if (socket != null) socket.close(); } catch (Exception ignored) {}
         socket = null;
+    }
+
+    private static SSLSocket connectTlsWithFallback(String host, int port) throws Exception {
+        InetAddress[] addresses = InetAddress.getAllByName(host);
+        if (addresses == null || addresses.length == 0) throw new UnknownHostException(host);
+
+        Exception lastError = null;
+        for (InetAddress address : addresses) {
+            Socket tcp = new Socket();
+            SSLSocket ssl = null;
+            try {
+                tcp.connect(new InetSocketAddress(address, port), 8000);
+                tcp.setSoTimeout(30000);
+                SSLSocketFactory sf = (SSLSocketFactory) SSLSocketFactory.getDefault();
+                ssl = (SSLSocket) sf.createSocket(tcp, host, port, true);
+                SSLParameters params = ssl.getSSLParameters();
+                params.setEndpointIdentificationAlgorithm("HTTPS");
+                ssl.setSSLParameters(params);
+                ssl.startHandshake();
+                return ssl;
+            } catch (Exception e) {
+                lastError = e;
+                try { if (ssl != null) ssl.close(); else tcp.close(); } catch (Exception ignored) {}
+            }
+        }
+
+        if (lastError != null) throw lastError;
+        throw new ConnectException("Unable to connect to relay");
     }
 
     private void heartbeatLoop() {
@@ -151,7 +170,7 @@ final class SecureWebSocket {
                 else if (opcode == 0x2) listener.onBinary(payload);
                 else if (opcode == 0x8) { reason = "server closed connection"; break; }
                 else if (opcode == 0x9) sendFrame(0xA, payload);
-                else if (opcode == 0xA) { /* pong */ }
+                else if (opcode == 0xA) { }
             }
         } catch (Exception e) {
             if (open) listener.onError(e);

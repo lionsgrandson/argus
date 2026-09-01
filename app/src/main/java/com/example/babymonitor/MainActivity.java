@@ -34,6 +34,7 @@ public class MainActivity extends Activity {
     private LinearLayout livePanel;
     private TextView setupRoleTitle;
     private TextView setupStatus;
+    private TextView pairingCodeView;
     private TextView liveConnection;
     private TextView liveMainText;
     private TextView batteryState;
@@ -64,10 +65,6 @@ public class MainActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
-        String role = selectedRole();
-        if ("parent".equals(role) && AppPrefs.pairing(this) != null) {
-            AppPrefs.setPairConfirmed(this, true);
-        }
         showCurrentScreen();
         handler.removeCallbacks(refreshTask);
         handler.post(refreshTask);
@@ -280,17 +277,16 @@ public class MainActivity extends Activity {
     }
 
     private boolean isPairedForUi(String role) {
-        if ("parent".equals(role)) return AppPrefs.pairing(this) != null;
         return AppPrefs.pairing(this) != null && AppPrefs.pairConfirmed(this);
     }
 
     private void renderSetup(String role) {
         boolean child = "baby".equals(role);
         setupRoleTitle.setText(child ? "טלפון ילד" : "טלפון הורה");
-        setupStatus.setText(child ? "ממתין לטלפון ההורה" : "לא מחובר");
-        setupStatus.setTextColor(Color.rgb(170, 50, 50));
+        updateSetupStatus(role);
 
         pairingControls.removeAllViews();
+        pairingCodeView = null;
         if (child) {
             pairingControls.addView(text("סרקו את קוד ה QR הזה בטלפון ההורה", 16,
                     Color.rgb(55, 60, 69), Gravity.CENTER), spaced(0, 0, 0, dp(10)));
@@ -301,20 +297,73 @@ public class MainActivity extends Activity {
             pairingQrView.setBackgroundColor(Color.WHITE);
             pairingQrView.setContentDescription("קוד QR לחיבור ARGUS");
             pairingControls.addView(pairingQrView, height(dp(260)));
-            renderPairingQr();
 
-            Button refreshQr = button("רענון קוד QR לבדיקה");
+            pairingControls.addView(text("או שלחו את הקוד הזה להורה", 15,
+                    Color.rgb(55, 60, 69), Gravity.CENTER), spaced(0, dp(12), 0, dp(6)));
+
+            pairingCodeView = text("", 22, Color.rgb(28, 32, 39), Gravity.CENTER);
+            pairingCodeView.setTypeface(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD);
+            pairingCodeView.setTextDirection(View.TEXT_DIRECTION_LTR);
+            pairingCodeView.setTextIsSelectable(true);
+            pairingCodeView.setPadding(dp(10), dp(12), dp(10), dp(12));
+            pairingCodeView.setBackgroundColor(Color.WHITE);
+            pairingControls.addView(pairingCodeView, matchWrap());
+
+            Button copyCode = primaryButton("העתקת קוד");
+            copyCode.setOnClickListener(v -> copyPairingCode());
+            pairingControls.addView(copyCode, spacedHeight(dp(8), dp(56)));
+
+            Button refreshQr = button("רענון קוד לחיבור");
             refreshQr.setOnClickListener(v -> rotatePairing());
-            pairingControls.addView(refreshQr, spaced(0, dp(10), 0, 0));
+            pairingControls.addView(refreshQr, spaced(0, dp(8), 0, 0));
+            renderPairingQr();
         } else {
             pairingControls.addView(text("סרקו את קוד ה QR שמופיע בטלפון הילד", 16,
                     Color.rgb(55, 60, 69), Gravity.CENTER), spaced(0, 0, 0, dp(12)));
             Button scan = primaryButton("סריקת קוד QR");
             scan.setOnClickListener(v -> scanPairingQr());
             pairingControls.addView(scan, height(dp(60)));
+
+            pairingControls.addView(text("או", 15, Color.rgb(92, 99, 109), Gravity.CENTER),
+                    spaced(0, dp(12), 0, dp(6)));
+
+            EditText manualCode = new EditText(this);
+            manualCode.setHint("הדביקו את קוד החיבור");
+            manualCode.setSingleLine(true);
+            manualCode.setTextSize(18);
+            manualCode.setGravity(Gravity.CENTER);
+            manualCode.setTextDirection(View.TEXT_DIRECTION_LTR);
+            manualCode.setTypeface(android.graphics.Typeface.MONOSPACE);
+            pairingControls.addView(manualCode, height(dp(58)));
+
+            Button connectCode = primaryButton("חיבור עם קוד");
+            connectCode.setOnClickListener(v -> {
+                String code = manualCode.getText().toString().trim();
+                if (code.isEmpty()) {
+                    Toast.makeText(this, "הדביקו קודם את קוד החיבור", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                acceptPairingPayload(code);
+            });
+            pairingControls.addView(connectCode, spacedHeight(dp(8), dp(58)));
         }
 
         renderPermissions(role);
+    }
+
+    private void updateSetupStatus(String role) {
+        boolean online = AppPrefs.peerOnline(this, role);
+        String status;
+        if (online) {
+            status = "מחובר";
+        } else if ("parent".equals(role) && AppPrefs.pairing(this) == null) {
+            status = "לא מחובר";
+        } else {
+            String fallback = "baby".equals(role) ? "ממתין לטלפון ההורה" : "מתחבר לטלפון הילד";
+            status = AppPrefs.getState(this, role, fallback);
+        }
+        setupStatus.setText(status);
+        setupStatus.setTextColor(online ? Color.rgb(39, 145, 84) : Color.rgb(164, 105, 12));
     }
 
     private void renderPermissions(String role) {
@@ -381,13 +430,24 @@ public class MainActivity extends Activity {
 
     private PairingConfig ensurePairing() {
         PairingConfig p = AppPrefs.pairing(this);
-        if (p != null) return p;
+        if (p != null) {
+            if ("baby".equals(selectedRole()) && !AppPrefs.pairConfirmed(this) && !p.isShortCode()) {
+                try {
+                    p = PairingConfig.generate();
+                    AppPrefs.savePairing(this, p);
+                } catch (Exception e) {
+                    Toast.makeText(this, "לא ניתן ליצור קוד חיבור", Toast.LENGTH_LONG).show();
+                    return null;
+                }
+            }
+            return p;
+        }
         try {
             p = PairingConfig.generate();
             AppPrefs.savePairing(this, p);
             return p;
         } catch (Exception e) {
-            Toast.makeText(this, "לא ניתן ליצור קוד QR לחיבור", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "לא ניתן ליצור קוד חיבור", Toast.LENGTH_LONG).show();
             return null;
         }
     }
@@ -397,7 +457,8 @@ public class MainActivity extends Activity {
         PairingConfig p = ensurePairing();
         if (p == null) return;
         try {
-            String payload = pairingLink(p);
+            String payload = p.encode();
+            if (pairingCodeView != null) pairingCodeView.setText(payload);
             int px = 720;
             BitMatrix matrix = new QRCodeWriter().encode(payload, BarcodeFormat.QR_CODE, px, px);
             Bitmap bitmap = Bitmap.createBitmap(px, px, Bitmap.Config.ARGB_8888);
@@ -415,12 +476,16 @@ public class MainActivity extends Activity {
         }
     }
 
-    private String pairingLink(PairingConfig p) {
-        return new Uri.Builder()
-                .scheme("argus")
-                .authority("pair")
-                .appendQueryParameter("code", p.encode())
-                .build().toString();
+    private void copyPairingCode() {
+        PairingConfig p = ensurePairing();
+        if (p == null) return;
+        ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        if (clipboard == null) {
+            Toast.makeText(this, "לא ניתן להעתיק את הקוד", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        clipboard.setPrimaryClip(ClipData.newPlainText("ARGUS pairing code", p.encode()));
+        Toast.makeText(this, "קוד החיבור הועתק", Toast.LENGTH_SHORT).show();
     }
 
     private void rotatePairing() {
@@ -433,9 +498,9 @@ public class MainActivity extends Activity {
             AppPrefs.setMode(this, "none");
             renderPairingQr();
             handler.postDelayed(this::startBaby, 250);
-            Toast.makeText(this, "נוצר קוד QR חדש", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "נוצר קוד חיבור חדש", Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
-            Toast.makeText(this, "לא ניתן לרענן את קוד ה QR", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "לא ניתן לרענן את קוד החיבור", Toast.LENGTH_LONG).show();
         }
     }
 
@@ -488,13 +553,16 @@ public class MainActivity extends Activity {
             }
             PairingConfig p = PairingConfig.parse(code);
             AppPrefs.savePairing(this, p);
-            AppPrefs.setPairConfirmed(this, true);
+            AppPrefs.setPairConfirmed(this, false);
+            AppPrefs.setPeerOnline(this, "parent", false);
+            AppPrefs.state(this, "parent", "מתחבר לטלפון הילד");
             AppPrefs.prefs(this).edit().putString(ROLE_PREF, "parent").apply();
-            Toast.makeText(this, "הטלפונים חוברו", Toast.LENGTH_SHORT).show();
+            renderedSetupRole = "";
+            Toast.makeText(this, "הקוד התקבל, מתחבר", Toast.LENGTH_SHORT).show();
             startParent();
             showCurrentScreen();
         } catch (Exception e) {
-            Toast.makeText(this, "קוד ה QR של ARGUS אינו תקין", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "קוד החיבור של ARGUS אינו תקין", Toast.LENGTH_LONG).show();
         }
     }
 
@@ -641,12 +709,18 @@ public class MainActivity extends Activity {
     private void refreshState() {
         showCurrentScreen();
         String role = selectedRole();
-        if ("baby".equals(role) && !AppPrefs.pairConfirmed(this) && AppPrefs.peerOnline(this, "baby")) {
+        if (("baby".equals(role) || "parent".equals(role))
+                && AppPrefs.pairing(this) != null
+                && !AppPrefs.pairConfirmed(this)
+                && AppPrefs.peerOnline(this, role)) {
             AppPrefs.setPairConfirmed(this, true);
             showCurrentScreen();
         }
         if (livePanel.getVisibility() == View.VISIBLE) renderLive(role);
-        if (setupPanel.getVisibility() == View.VISIBLE) renderPermissions(role);
+        if (setupPanel.getVisibility() == View.VISIBLE) {
+            updateSetupStatus(role);
+            renderPermissions(role);
+        }
     }
 
     private void changePhoneRole() {
