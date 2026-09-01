@@ -4,6 +4,7 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
+import android.view.View;
 import android.view.WindowManager;
 import android.widget.Toast;
 
@@ -25,9 +26,12 @@ public class ArgusQrScannerActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        HebrewLocale.apply(this);
+        getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
         barcodeView = new DecoratedBarcodeView(this);
+        barcodeView.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         barcodeView.setStatusText("סרקו את קוד ה QR שמופיע בטלפון הילד");
         setContentView(barcodeView);
 
@@ -66,6 +70,7 @@ public class ArgusQrScannerActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        HebrewLocale.apply(this);
         if (scannerStarted && !finished) barcodeView.resume();
     }
 
@@ -99,7 +104,7 @@ public class ArgusQrScannerActivity extends Activity {
         } else {
             finished = true;
             GmsBarcodeScanner.deliverFailure(
-                    new SecurityException("Camera permission was not granted")
+                    new SecurityException("הרשאת המצלמה לא אושרה")
             );
             Toast.makeText(this, "נדרשת הרשאת מצלמה כדי לסרוק את קוד ה QR", Toast.LENGTH_LONG).show();
             finish();
