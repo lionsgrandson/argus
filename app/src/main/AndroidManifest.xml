@@ -24,6 +24,7 @@
         android:icon="@drawable/argus_icon"
         android:roundIcon="@drawable/argus_icon"
         android:label="@string/app_name"
+        android:supportsRtl="true"
         android:usesCleartextTraffic="false"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
