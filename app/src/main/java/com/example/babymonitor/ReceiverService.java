@@ -72,12 +72,21 @@ public class ReceiverService extends Service {
             pairing = AppPrefs.pairing(this);
             String relay = AppPrefs.relay(this);
             if (pairing == null || relay.isEmpty()) {
-                AppPrefs.state(this, "parent", "חסרים פרטי חיבור");
+                ErrorReporter.report(this, "parent", "E100", "חסרים פרטי חיבור", null);
                 stopSelf();
                 return START_NOT_STICKY;
             }
-            codec = new PacketCodec(pairing.encryptionKey);
-            initAudio();
+            try {
+                codec = new PacketCodec(pairing.encryptionKey);
+            } catch (Exception e) {
+                ErrorReporter.report(this, "parent", "E401", "לא ניתן להכין את הצפנת החיבור", e);
+                stopSelf();
+                return START_NOT_STICKY;
+            }
+            if (!initAudio()) {
+                stopSelf();
+                return START_NOT_STICKY;
+            }
             acquireLocks();
             watchdog.scheduleAtFixedRate(this::watchConnection, 3, 3, TimeUnit.SECONDS);
             new Thread(this::connectionLoop, "ArgusParentConnection").start();
@@ -85,14 +94,28 @@ public class ReceiverService extends Service {
         return START_STICKY;
     }
 
-    private void initAudio() {
-        int min = AudioTrack.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT);
-        track = new AudioTrack.Builder()
-                .setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
-                .setAudioFormat(new AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(SAMPLE_RATE).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
-                .setBufferSizeInBytes(Math.max(min, 3200))
-                .setTransferMode(AudioTrack.MODE_STREAM).build();
-        track.play();
+    private boolean initAudio() {
+        try {
+            int min = AudioTrack.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT);
+            track = new AudioTrack.Builder()
+                    .setAudioAttributes(new AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build())
+                    .setAudioFormat(new AudioFormat.Builder()
+                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                            .setSampleRate(SAMPLE_RATE)
+                            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                            .build())
+                    .setBufferSizeInBytes(Math.max(min, 3200))
+                    .setTransferMode(AudioTrack.MODE_STREAM)
+                    .build();
+            track.play();
+            return true;
+        } catch (Exception e) {
+            ErrorReporter.report(this, "parent", "E304", "לא ניתן להפעיל את השמע בטלפון ההורה", e);
+            return false;
+        }
     }
 
     private void connectionLoop() {
@@ -114,6 +137,7 @@ public class ReceiverService extends Service {
                             peerOnline.set(true);
                             AppPrefs.setPeerOnline(ReceiverService.this, "parent", true);
                             AppPrefs.setPairConfirmed(ReceiverService.this, true);
+                            ErrorReporter.clear(ReceiverService.this, "parent");
                             AppPrefs.state(ReceiverService.this, "parent", "מחובר");
                             updateNotification("מחובר");
                             sendStreamControl();
@@ -124,7 +148,9 @@ public class ReceiverService extends Service {
                             if (hadLiveMedia) triggerConnectionAlarm("טלפון הילד התנתק");
                         }
                     }
-                    @Override public void onBinary(byte[] data) { handleEncrypted(data); }
+                    @Override public void onBinary(byte[] data) {
+                        handleEncrypted(data);
+                    }
                     @Override public void onClosed(String reason) {
                         peerOnline.set(false);
                         AppPrefs.setPeerOnline(ReceiverService.this, "parent", false);
@@ -144,8 +170,8 @@ public class ReceiverService extends Service {
                 }
             } catch (Exception e) {
                 AppPrefs.setPeerOnline(this, "parent", false);
-                AppPrefs.state(this, "parent", "מתחבר מחדש");
-                updateNotification("מתחבר מחדש");
+                ErrorReporter.reportConnection(this, "parent", e);
+                updateNotification("שגיאת חיבור " + AppPrefs.lastErrorCode(this));
                 if (hadLiveMedia) triggerConnectionAlarm("טלפון ההורה איבד את החיבור");
             } finally {
                 SecureWebSocket old = ws;
@@ -155,7 +181,8 @@ public class ReceiverService extends Service {
                 AppPrefs.setPeerOnline(this, "parent", false);
             }
             if (running.get()) {
-                try { Thread.sleep(delayMs); } catch (InterruptedException ignored) { }
+                try { Thread.sleep(delayMs); }
+                catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
                 delayMs = Math.min(delayMs * 2, 15000);
             }
         }
@@ -171,7 +198,8 @@ public class ReceiverService extends Service {
             byte[] clear = j.toString().getBytes(StandardCharsets.UTF_8);
             long next = controlSequence.getAndIncrement();
             socket.sendBinary(codec.encrypt(PacketCodec.TYPE_STREAM_CONTROL, controlSession, next, clear, clear.length));
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            ErrorReporter.report(this, "parent", "E402", "שליחת פקודת השידור לטלפון הילד נכשלה", e);
         }
     }
 
@@ -220,7 +248,8 @@ public class ReceiverService extends Service {
                     lowBatteryNotified = false;
                 }
             }
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            ErrorReporter.report(this, "parent", "E401", "מידע מוצפן מהטלפון הילד לא נקרא", e);
         }
     }
 
@@ -250,7 +279,10 @@ public class ReceiverService extends Service {
         long now = System.currentTimeMillis();
         boolean staleAudio = mic && now - lastAudioAt > 8000;
         boolean staleVideo = camera && now - lastVideoAt > 8000;
-        if ((mic && !camera && staleAudio) || (camera && !mic && staleVideo) || (camera && mic && staleAudio && staleVideo)) {
+        if ((mic && !camera && staleAudio)
+                || (camera && !mic && staleVideo)
+                || (camera && mic && staleAudio && staleVideo)) {
+            ErrorReporter.report(this, "parent", "E405", "החיבור קיים אבל לא מתקבל שידור מטלפון הילד", null);
             triggerConnectionAlarm("לא התקבל שידור מטלפון הילד");
         }
     }
@@ -260,7 +292,8 @@ public class ReceiverService extends Service {
         AppPrefs.state(this, "parent", "התראה: " + reason);
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         Intent open = new Intent(this, MainActivity.class);
-        PendingIntent pi = PendingIntent.getActivity(this, 21, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        PendingIntent pi = PendingIntent.getActivity(this, 21, open,
+                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         Notification n = new Notification.Builder(this, "argus_alerts")
                 .setSmallIcon(android.R.drawable.stat_notify_error)
                 .setContentTitle("החיבור של ARGUS נותק")
@@ -268,7 +301,9 @@ public class ReceiverService extends Service {
                 .setCategory(Notification.CATEGORY_ALARM)
                 .setPriority(Notification.PRIORITY_MAX)
                 .setOnlyAlertOnce(true)
-                .setAutoCancel(true).setContentIntent(pi).build();
+                .setAutoCancel(true)
+                .setContentIntent(pi)
+                .build();
         nm.notify(ALERT_ID, n);
         long now = System.currentTimeMillis();
         if (now - lastAlertAt >= 10000) {
@@ -277,7 +312,9 @@ public class ReceiverService extends Service {
                 ToneGenerator tone = new ToneGenerator(AudioManager.STREAM_ALARM, 100);
                 tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 1000);
                 new Handler(Looper.getMainLooper()).postDelayed(tone::release, 1500);
-            } catch (Exception ignored) { }
+            } catch (Exception e) {
+                ErrorReporter.report(this, "parent", "E406", "לא ניתן להשמיע צליל התראת ניתוק", e);
+            }
         }
     }
 
@@ -292,7 +329,8 @@ public class ReceiverService extends Service {
                 .setContentText("סוללת הילד על " + pct + "%")
                 .setCategory(Notification.CATEGORY_ALARM)
                 .setPriority(Notification.PRIORITY_HIGH)
-                .setAutoCancel(true).build();
+                .setAutoCancel(true)
+                .build();
         ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).notify(ALERT_ID + 1, n);
     }
 
@@ -306,7 +344,9 @@ public class ReceiverService extends Service {
             wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "ARGUS:ParentWifi");
             wifiLock.setReferenceCounted(false);
             wifiLock.acquire();
-        } catch (Exception ignored) { }
+        } catch (Exception e) {
+            ErrorReporter.report(this, "parent", "E404", "לא ניתן לנעול את חיבור ה WiFi ברקע", e);
+        }
     }
 
     private Notification notification(String text) {
@@ -319,7 +359,10 @@ public class ReceiverService extends Service {
         return new Notification.Builder(this, "argus_receiver")
                 .setSmallIcon(android.R.drawable.ic_lock_silent_mode_off)
                 .setContentTitle("ARGUS פעיל")
-                .setContentText(text).setOngoing(true).setOnlyAlertOnce(true).setContentIntent(content)
+                .setContentText(text)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setContentIntent(content)
                 .addAction(new Notification.Action.Builder(android.R.drawable.ic_menu_close_clear_cancel, "עצור", stopPi).build())
                 .build();
     }

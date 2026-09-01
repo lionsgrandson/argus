@@ -19,6 +19,7 @@ final class SecureWebSocket {
 
     private final URI uri;
     private final String authToken;
+    private final String role;
     private final Listener listener;
     private volatile Socket socket;
     private volatile InputStream in;
@@ -28,20 +29,38 @@ final class SecureWebSocket {
     private final SecureRandom random = new SecureRandom();
 
     SecureWebSocket(String baseUrl, PairingConfig pairing, String role, Listener listener) throws Exception {
-        if (baseUrl == null || baseUrl.trim().isEmpty()) throw new IllegalArgumentException("Relay URL is empty");
+        if (baseUrl == null || baseUrl.trim().isEmpty()) {
+            throw new ErrorReporter.ArgusException("E200", "כתובת שרת החיבור חסרה", "Relay URL is empty");
+        }
         URI base = new URI(baseUrl.trim());
-        if (!"wss".equalsIgnoreCase(base.getScheme())) throw new IllegalArgumentException("Relay URL must start with wss://");
-        if (base.getHost() == null) throw new IllegalArgumentException("Relay URL has no host");
+        if (!"wss".equalsIgnoreCase(base.getScheme())) {
+            throw new ErrorReporter.ArgusException("E200", "כתובת שרת החיבור אינה מאובטחת", "Relay URL must start with wss://");
+        }
+        if (base.getHost() == null) {
+            throw new ErrorReporter.ArgusException("E200", "כתובת שרת החיבור אינה תקינה", "Relay URL has no host");
+        }
         String path = base.getRawPath();
         if (path == null || path.isEmpty()) path = "/ws";
-        String q = "room=" + enc(pairing.roomId) + "&role=" + enc(role) + "&v=2";
+        String q = "room=" + enc(pairing.roomId) + "&role=" + enc(role) + "&v=4";
         if (base.getRawQuery() != null && !base.getRawQuery().isEmpty()) q = base.getRawQuery() + "&" + q;
         this.uri = new URI("wss", null, base.getHost(), base.getPort(), path, q, null);
         this.authToken = pairing.authToken;
+        this.role = role;
         this.listener = listener;
     }
 
     void connect() throws Exception {
+        try {
+            doConnect();
+            ErrorReporter.clear(role);
+        } catch (Exception e) {
+            closeSilently();
+            ErrorReporter.reportConnection(role, e);
+            throw e;
+        }
+    }
+
+    private void doConnect() throws Exception {
         String host = uri.getHost();
         int port = uri.getPort() > 0 ? uri.getPort() : 443;
 
@@ -62,20 +81,32 @@ final class SecureWebSocket {
                 "Sec-WebSocket-Key: " + wsKey + "\r\n" +
                 "Sec-WebSocket-Version: 13\r\n" +
                 "Authorization: Bearer " + authToken + "\r\n" +
-                "User-Agent: ARGUSAndroid/3\r\n\r\n";
+                "User-Agent: ARGUSAndroid/4\r\n\r\n";
         out.write(request.getBytes(StandardCharsets.US_ASCII));
         out.flush();
 
         String header = readHttpHeader(in);
         String[] lines = header.split("\\r\\n");
-        if (lines.length == 0 || !lines[0].contains(" 101 ")) throw new IOException("WebSocket upgrade failed: " + (lines.length == 0 ? "no response" : lines[0]));
-        String accept = null;
-        for (String line : lines) {
-            int idx = line.indexOf(':');
-            if (idx > 0 && "sec-websocket-accept".equalsIgnoreCase(line.substring(0, idx).trim())) accept = line.substring(idx + 1).trim();
+        if (lines.length == 0) {
+            throw new ErrorReporter.ArgusException("E204", "שרת החיבור לא החזיר תשובה תקינה", "No HTTP response from relay");
         }
+        int status = httpStatus(lines[0]);
+        if (status != 101) {
+            String serverCode = headerValue(lines, "X-Argus-Error");
+            if ("E102".equals(serverCode) || status == 426) {
+                throw new ErrorReporter.ArgusException("E102", "גרסת חיבור ישנה אופסה. יש לעדכן את ARGUS", lines[0]);
+            }
+            if ("E205".equals(serverCode) || status == 401 || status == 403 || status == 409) {
+                throw new ErrorReporter.ArgusException("E205", "שרת החיבור דחה את קוד החיבור", lines[0]);
+            }
+            throw new ErrorReporter.ArgusException("E204", "שרת החיבור החזיר תשובה לא תקינה", lines[0]);
+        }
+
+        String accept = headerValue(lines, "Sec-WebSocket-Accept");
         String expected = expectedAccept(wsKey);
-        if (!expected.equals(accept)) throw new SSLHandshakeException("Invalid WebSocket accept header");
+        if (!expected.equals(accept)) {
+            throw new ErrorReporter.ArgusException("E203", "אימות חיבור האבטחה נכשל", "Invalid WebSocket accept header");
+        }
 
         open = true;
         listener.onOpen();
@@ -90,14 +121,23 @@ final class SecureWebSocket {
 
     boolean isOpen() { return open; }
 
-    void sendText(String text) throws IOException { sendFrame(0x1, text.getBytes(StandardCharsets.UTF_8)); }
-    void sendBinary(byte[] data) throws IOException { sendFrame(0x2, data); }
+    void sendText(String text) throws IOException {
+        sendFrame(0x1, text.getBytes(StandardCharsets.UTF_8));
+    }
+
+    void sendBinary(byte[] data) throws IOException {
+        sendFrame(0x2, data);
+    }
 
     void close() {
         if (!open && socket == null) return;
-        try { if (open) sendFrame(0x8, new byte[0]); } catch (Exception ignored) {}
+        try { if (open) sendFrame(0x8, new byte[0]); } catch (Exception ignored) { }
         open = false;
-        try { if (socket != null) socket.close(); } catch (Exception ignored) {}
+        closeSilently();
+    }
+
+    private void closeSilently() {
+        try { if (socket != null) socket.close(); } catch (Exception ignored) { }
         socket = null;
     }
 
@@ -121,7 +161,7 @@ final class SecureWebSocket {
                 return ssl;
             } catch (Exception e) {
                 lastError = e;
-                try { if (ssl != null) ssl.close(); else tcp.close(); } catch (Exception ignored) {}
+                try { if (ssl != null) ssl.close(); else tcp.close(); } catch (Exception ignored) { }
             }
         }
 
@@ -138,7 +178,8 @@ final class SecureWebSocket {
                 Thread.currentThread().interrupt();
                 return;
             } catch (Exception e) {
-                try { if (socket != null) socket.close(); } catch (Exception ignored) {}
+                if (open) ErrorReporter.reportConnection(role, e);
+                closeSilently();
                 return;
             }
         }
@@ -146,10 +187,14 @@ final class SecureWebSocket {
 
     private void readLoop() {
         String reason = "connection closed";
+        boolean unexpectedClose = false;
         try {
             while (open) {
                 int b0 = in.read();
-                if (b0 < 0) break;
+                if (b0 < 0) {
+                    unexpectedClose = true;
+                    throw new EOFException("Relay closed the socket");
+                }
                 int b1 = readRequired(in);
                 int opcode = b0 & 0x0F;
                 boolean fin = (b0 & 0x80) != 0;
@@ -161,24 +206,36 @@ final class SecureWebSocket {
                     len = 0;
                     for (int i = 0; i < 8; i++) len = (len << 8) | readRequired(in);
                 }
-                if (len > 1024 * 1024) throw new IOException("Frame too large");
+                if (len > 1024 * 1024) {
+                    throw new ErrorReporter.ArgusException("E209", "השרת שלח חבילת מידע גדולה מדי", "Frame too large: " + len);
+                }
                 byte[] mask = masked ? readExactly(in, 4) : null;
                 byte[] payload = readExactly(in, (int) len);
-                if (masked) for (int i = 0; i < payload.length; i++) payload[i] ^= mask[i & 3];
+                if (masked) {
+                    for (int i = 0; i < payload.length; i++) payload[i] ^= mask[i & 3];
+                }
 
                 if (opcode == 0x1) listener.onText(new String(payload, StandardCharsets.UTF_8));
                 else if (opcode == 0x2) listener.onBinary(payload);
-                else if (opcode == 0x8) { reason = "server closed connection"; break; }
-                else if (opcode == 0x9) sendFrame(0xA, payload);
+                else if (opcode == 0x8) {
+                    reason = "server closed connection";
+                    unexpectedClose = true;
+                    ErrorReporter.report(role, "E208", "שרת החיבור סגר את החיבור", null);
+                    break;
+                } else if (opcode == 0x9) sendFrame(0xA, payload);
                 else if (opcode == 0xA) { }
             }
         } catch (Exception e) {
-            if (open) listener.onError(e);
+            if (open) {
+                unexpectedClose = true;
+                ErrorReporter.reportConnection(role, e);
+                listener.onError(e);
+            }
             reason = e.getMessage() == null ? "connection error" : e.getMessage();
         } finally {
             open = false;
-            try { if (socket != null) socket.close(); } catch (Exception ignored) {}
-            socket = null;
+            closeSilently();
+            if (!unexpectedClose) ErrorReporter.clear(role);
             listener.onClosed(reason);
         }
     }
@@ -222,6 +279,24 @@ final class SecureWebSocket {
             else state = (b == '\r') ? 1 : 0;
         }
         throw new IOException("Relay HTTP header too large");
+    }
+
+    private static int httpStatus(String statusLine) {
+        if (statusLine == null) return -1;
+        String[] parts = statusLine.split(" ");
+        if (parts.length < 2) return -1;
+        try { return Integer.parseInt(parts[1]); }
+        catch (NumberFormatException ignored) { return -1; }
+    }
+
+    private static String headerValue(String[] lines, String name) {
+        for (String line : lines) {
+            int idx = line.indexOf(':');
+            if (idx > 0 && name.equalsIgnoreCase(line.substring(0, idx).trim())) {
+                return line.substring(idx + 1).trim();
+            }
+        }
+        return null;
     }
 
     private static String expectedAccept(String key) throws Exception {

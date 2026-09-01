@@ -1,10 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 
-// ARGUS pairing rule:
-// Once the two phones share the QR pairing credentials, that room stays paired.
-// There is no server-side expiry, login, approval step, or re-pair requirement.
-// If either phone loses internet, it can reconnect to the same room with the same
-// credentials as many times as needed.
+const PROTOCOL_VERSION = "4";
+const PAIRING_EPOCH = "reset-2026-09-01-v4";
 const MAX_FRAME_BYTES = 768 * 1024;
 const MAX_BYTES_PER_10S = 32 * 1024 * 1024;
 
@@ -39,6 +36,17 @@ function logEvent(event, data = {}) {
   console.log(JSON.stringify({ event, ...data, at: new Date().toISOString() }));
 }
 
+function errorResponse(code, status, message) {
+  return new Response(message, {
+    status,
+    headers: {
+      "content-type": "text/plain; charset=utf-8",
+      "cache-control": "no-store",
+      "x-argus-error": code,
+    },
+  });
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -47,28 +55,27 @@ export default {
       return Response.json(
         {
           ok: true,
-          protocol: 2,
+          protocol: Number(PROTOCOL_VERSION),
+          pairingEpoch: PAIRING_EPOCH,
           relay: "cloudflare-durable-object",
-          pairing: "persistent",
+          pairing: "persistent-within-current-epoch",
           reconnect: true,
           audio: true,
           video: true,
           parentStreamControl: true,
+          errorCodes: true,
         },
         { headers: { "cache-control": "no-store" } },
       );
     }
 
     if (url.pathname !== "/ws") {
-      return new Response("ARGUS relay. Use WebSocket /ws.", {
-        status: 404,
-        headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
-      });
+      return errorResponse("E204", 404, "ARGUS relay. Use WebSocket /ws.");
     }
 
     if (request.method !== "GET" || (request.headers.get("Upgrade") || "").toLowerCase() !== "websocket") {
       logEvent("upgrade_required");
-      return new Response("WebSocket upgrade required", { status: 426 });
+      return errorResponse("E204", 426, "WebSocket upgrade required");
     }
 
     const roomId = url.searchParams.get("room") || "";
@@ -77,25 +84,25 @@ export default {
     const auth = authFrom(request);
     const hint = roomHint(roomId);
 
+    if (version !== PROTOCOL_VERSION) {
+      logEvent("connection_rejected", { reason: "pairing_epoch_reset", role, room: hint, version });
+      return errorResponse("E102", 426, "Old ARGUS pairing protocol was reset. Create a new pairing code.");
+    }
     if (!validToken(roomId, 12, 32)) {
       logEvent("connection_rejected", { reason: "invalid_room", role, room: hint });
-      return new Response("Unauthorized", { status: 401 });
+      return errorResponse("E205", 401, "Invalid room");
     }
     if (!validToken(auth, 16, 64)) {
       logEvent("connection_rejected", { reason: "invalid_auth", role, room: hint });
-      return new Response("Unauthorized", { status: 401 });
+      return errorResponse("E205", 401, "Invalid authorization");
     }
     if (!["baby", "parent"].includes(role)) {
       logEvent("connection_rejected", { reason: "invalid_role", role, room: hint });
-      return new Response("Unauthorized", { status: 401 });
-    }
-    if (version !== "2") {
-      logEvent("connection_rejected", { reason: "protocol_version", role, room: hint, version });
-      return new Response("Unauthorized", { status: 401 });
+      return errorResponse("E205", 401, "Invalid role");
     }
 
-    logEvent("connection_attempt", { role, room: hint });
-    const stub = env.ROOMS.getByName(roomId);
+    logEvent("connection_attempt", { role, room: hint, epoch: PAIRING_EPOCH });
+    const stub = env.ROOMS.getByName(`${PAIRING_EPOCH}:${roomId}`);
     return stub.fetch(request);
   },
 };
@@ -115,12 +122,17 @@ export class Room extends DurableObject {
     const url = new URL(request.url);
     const roomId = url.searchParams.get("room") || "";
     const role = url.searchParams.get("role") || "";
+    const version = url.searchParams.get("v") || "";
     const auth = authFrom(request);
     const hint = roomHint(roomId);
 
+    if (version !== PROTOCOL_VERSION) {
+      logEvent("room_connection_rejected", { role, room: hint, reason: "pairing_epoch_reset" });
+      return errorResponse("E102", 426, "Old ARGUS pairing protocol was reset");
+    }
     if (!["baby", "parent"].includes(role) || !validToken(auth, 16, 64)) {
       logEvent("room_connection_rejected", { role, room: hint, reason: "invalid_credentials" });
-      return new Response("Unauthorized", { status: 401 });
+      return errorResponse("E205", 401, "Unauthorized");
     }
 
     const suppliedHash = await sha256Hex(auth);
@@ -128,13 +140,14 @@ export class Room extends DurableObject {
 
     if (storedHash && storedHash !== suppliedHash) {
       logEvent("room_connection_rejected", { role, room: hint, reason: "pairing_mismatch" });
-      return new Response("Unauthorized", { status: 401 });
+      return errorResponse("E205", 409, "Pairing mismatch");
     }
 
     if (!storedHash) {
       await this.ctx.storage.put("authHash", suppliedHash);
       await this.ctx.storage.put("pairedAt", Date.now());
-      logEvent("room_paired", { role, room: hint });
+      await this.ctx.storage.put("pairingEpoch", PAIRING_EPOCH);
+      logEvent("room_paired", { role, room: hint, epoch: PAIRING_EPOCH });
     }
 
     for (const [socket, session] of this.sessions) {
@@ -154,6 +167,7 @@ export class Room extends DurableObject {
       roomHint: hint,
       windowStarted: Date.now(),
       windowBytes: 0,
+      pairingEpoch: PAIRING_EPOCH,
     };
     server.serializeAttachment(session);
     this.sessions.set(server, session);
@@ -186,7 +200,7 @@ export class Room extends DurableObject {
 
     const size = message.byteLength;
     if (size > MAX_FRAME_BYTES) {
-      logEvent("frame_rejected", { room: session.roomHint || "unknown", role: session.role, reason: "frame_too_large", bytes: size });
+      logEvent("frame_rejected", { room: session.roomHint || "unknown", role: session.role, reason: "frame_too_large", bytes: size, code: "E209" });
       return;
     }
 
@@ -198,7 +212,7 @@ export class Room extends DurableObject {
     session.windowBytes += size;
 
     if (session.windowBytes > MAX_BYTES_PER_10S) {
-      logEvent("frame_rejected", { room: session.roomHint || "unknown", role: session.role, reason: "temporary_rate_limit" });
+      logEvent("frame_rejected", { room: session.roomHint || "unknown", role: session.role, reason: "temporary_rate_limit", code: "E210" });
       return;
     }
 
@@ -208,7 +222,11 @@ export class Room extends DurableObject {
     const targetRole = session.role === "baby" ? "parent" : "baby";
     for (const [socket, state] of this.sessions) {
       if (state.role === targetRole) {
-        try { socket.send(message); } catch {}
+        try {
+          socket.send(message);
+        } catch (error) {
+          logEvent("forward_error", { room: session.roomHint || "unknown", role: session.role, code: "E211", message: error?.message || "send failed" });
+        }
       }
     }
   }
@@ -232,6 +250,7 @@ export class Room extends DurableObject {
     logEvent("socket_error", {
       role: session?.role || "unknown",
       room: session?.roomHint || "unknown",
+      code: "E212",
       message: error?.message || "websocket error",
     });
     this.notifyOffline(session?.role);

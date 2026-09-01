@@ -10,8 +10,8 @@ android {
         applicationId 'com.example.babymonitor'
         minSdk 26
         targetSdk 35
-        versionCode 15
-        versionName '3.1.0-short-pairing'
+        versionCode 16
+        versionName '3.2.0-pairing-reset-errors'
         buildConfigField 'String', 'DEFAULT_RELAY_URL', groovy.json.JsonOutput.toJson(bakedRelay)
     }
 

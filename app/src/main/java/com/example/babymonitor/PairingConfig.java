@@ -8,8 +8,10 @@ import java.util.Base64;
 import java.util.Locale;
 
 final class PairingConfig {
+    private static final String CODE_PREFIX = "A4";
     private static final String SHORT_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    private static final int SHORT_CODE_LENGTH = 10;
+    private static final int RANDOM_CODE_LENGTH = 10;
+    private static final int FULL_CODE_LENGTH = CODE_PREFIX.length() + RANDOM_CODE_LENGTH;
 
     final String roomId;
     final String authToken;
@@ -25,66 +27,76 @@ final class PairingConfig {
 
     static PairingConfig generate() {
         SecureRandom random = new SecureRandom();
-        StringBuilder code = new StringBuilder(SHORT_CODE_LENGTH);
-        for (int i = 0; i < SHORT_CODE_LENGTH; i++) {
+        StringBuilder code = new StringBuilder(FULL_CODE_LENGTH);
+        code.append(CODE_PREFIX);
+        for (int i = 0; i < RANDOM_CODE_LENGTH; i++) {
             code.append(SHORT_ALPHABET.charAt(random.nextInt(SHORT_ALPHABET.length())));
         }
         return fromShortCode(code.toString());
     }
 
     String encode() {
-        if (shortCode != null) return shortCode;
-        return "BM2." + roomId + "." + authToken + "." + b64(encryptionKey);
+        return shortCode;
     }
 
     boolean isShortCode() {
-        return shortCode != null;
+        return true;
     }
 
     static PairingConfig parse(String code) {
-        if (code == null) throw new IllegalArgumentException("Pairing code is empty");
+        if (code == null || code.trim().isEmpty()) {
+            ErrorReporter.report("setup", "E101", "קוד החיבור ריק", null);
+            throw new IllegalArgumentException("E101 empty pairing code");
+        }
+
         String trimmed = code.trim();
         String normalized = trimmed.toUpperCase(Locale.US).replaceAll("[\\s-]", "");
 
-        if (normalized.length() == SHORT_CODE_LENGTH && isValidShortCode(normalized)) {
+        if (normalized.length() == FULL_CODE_LENGTH
+                && normalized.startsWith(CODE_PREFIX)
+                && isValidRandomPart(normalized.substring(CODE_PREFIX.length()))) {
             return fromShortCode(normalized);
         }
-        if (normalized.startsWith("ARGUS")
-                && normalized.length() == SHORT_CODE_LENGTH + 5
-                && isValidShortCode(normalized.substring(5))) {
-            return fromShortCode(normalized.substring(5));
+
+        if (looksLikeOldCode(trimmed, normalized)) {
+            ErrorReporter.report("setup", "E102", "קוד החיבור ישן ואופס. צרו קוד חדש", null);
+            throw new IllegalArgumentException("E102 obsolete pairing code");
         }
 
-        String[] parts = trimmed.split("\\.");
-        if (parts.length != 4 || !"BM2".equals(parts[0])) {
-            throw new IllegalArgumentException("Invalid ARGUS pairing code");
-        }
-        byte[] room = decode(parts[1]);
-        byte[] auth = decode(parts[2]);
-        byte[] key = decode(parts[3]);
-        if (room.length != 12 || auth.length != 16 || key.length != 32) {
-            throw new IllegalArgumentException("Invalid pairing code length");
-        }
-        return new PairingConfig(parts[1], parts[2], key, null);
+        ErrorReporter.report("setup", "E101", "קוד החיבור אינו תקין", null);
+        throw new IllegalArgumentException("E101 invalid pairing code");
     }
 
     private static PairingConfig fromShortCode(String code) {
         try {
-            byte[] roomDigest = sha256("ARGUS3|room|" + code);
-            byte[] authDigest = sha256("ARGUS3|auth|" + code);
-            byte[] key = sha256("ARGUS3|key|" + code);
+            byte[] roomDigest = sha256("ARGUS4|room|" + code);
+            byte[] authDigest = sha256("ARGUS4|auth|" + code);
+            byte[] key = sha256("ARGUS4|key|" + code);
             String roomId = b64(Arrays.copyOf(roomDigest, 12));
             String authToken = b64(Arrays.copyOf(authDigest, 16));
             return new PairingConfig(roomId, authToken, key, code);
         } catch (Exception e) {
-            throw new IllegalStateException("Unable to create ARGUS pairing", e);
+            ErrorReporter.report("setup", "E103", "לא ניתן ליצור קוד חיבור", e);
+            throw new IllegalStateException("E103 unable to create ARGUS pairing", e);
         }
     }
 
-    private static boolean isValidShortCode(String code) {
-        if (code.length() != SHORT_CODE_LENGTH) return false;
-        for (int i = 0; i < code.length(); i++) {
-            if (SHORT_ALPHABET.indexOf(code.charAt(i)) < 0) return false;
+    private static boolean looksLikeOldCode(String trimmed, String normalized) {
+        if (trimmed.startsWith("BM2.")) return true;
+        if (normalized.startsWith("ARGUS")) return true;
+        if (normalized.length() == 10) {
+            for (int i = 0; i < normalized.length(); i++) {
+                if (SHORT_ALPHABET.indexOf(normalized.charAt(i)) < 0) return false;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private static boolean isValidRandomPart(String part) {
+        if (part.length() != RANDOM_CODE_LENGTH) return false;
+        for (int i = 0; i < part.length(); i++) {
+            if (SHORT_ALPHABET.indexOf(part.charAt(i)) < 0) return false;
         }
         return true;
     }
@@ -96,9 +108,5 @@ final class PairingConfig {
 
     private static String b64(byte[] bytes) {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
-    }
-
-    private static byte[] decode(String value) {
-        return Base64.getUrlDecoder().decode(value);
     }
 }

@@ -62,13 +62,19 @@ public class SenderService extends Service {
             pairing = AppPrefs.pairing(this);
             String relay = AppPrefs.relay(this);
             if (pairing == null || relay.isEmpty()) {
-                AppPrefs.state(this, "baby", "חסרים פרטי חיבור");
+                ErrorReporter.report(this, "baby", "E100", "חסרים פרטי חיבור", null);
                 stopSelf();
                 return START_NOT_STICKY;
             }
             cameraEnabled.set(AppPrefs.childCameraEnabled(this));
             micEnabled.set(AppPrefs.childMicEnabled(this));
-            codec = new PacketCodec(pairing.encryptionKey);
+            try {
+                codec = new PacketCodec(pairing.encryptionKey);
+            } catch (Exception e) {
+                ErrorReporter.report(this, "baby", "E401", "לא ניתן להכין את הצפנת החיבור", e);
+                stopSelf();
+                return START_NOT_STICKY;
+            }
             acquireLocks();
             startCamera();
             new Thread(this::connectionLoop, "ArgusChildConnection").start();
@@ -93,6 +99,7 @@ public class SenderService extends Service {
                 long next = sequence.getAndIncrement();
                 socket.sendBinary(codec.encrypt(type, sessionId, next, payload, length));
             } catch (Exception e) {
+                ErrorReporter.report(this, "baby", "E207", "שליחת מידע לטלפון ההורה נכשלה", e);
                 socket.close();
             }
         }
@@ -117,6 +124,7 @@ public class SenderService extends Service {
                             peerOnline.set(true);
                             AppPrefs.setPeerOnline(SenderService.this, "baby", true);
                             AppPrefs.setPairConfirmed(SenderService.this, true);
+                            ErrorReporter.clear(SenderService.this, "baby");
                             AppPrefs.state(SenderService.this, "baby", liveDescription());
                             updateNotification(liveDescription());
                         } else if ("PEER:OFFLINE".equals(text)) {
@@ -148,8 +156,8 @@ public class SenderService extends Service {
                 }
             } catch (Exception e) {
                 AppPrefs.setPeerOnline(this, "baby", false);
-                AppPrefs.state(this, "baby", "מתחבר מחדש");
-                updateNotification("מתחבר מחדש");
+                ErrorReporter.reportConnection(this, "baby", e);
+                updateNotification("שגיאת חיבור " + AppPrefs.lastErrorCode(this));
             } finally {
                 SecureWebSocket old = ws;
                 ws = null;
@@ -158,7 +166,8 @@ public class SenderService extends Service {
                 AppPrefs.setPeerOnline(this, "baby", false);
             }
             if (running.get()) {
-                try { Thread.sleep(delayMs); } catch (InterruptedException ignored) { }
+                try { Thread.sleep(delayMs); }
+                catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
                 delayMs = Math.min(delayMs * 2, 15000);
             }
         }
@@ -185,7 +194,8 @@ public class SenderService extends Service {
                 AppPrefs.state(this, "baby", liveDescription());
                 updateNotification(liveDescription());
             }
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            ErrorReporter.report(this, "baby", "E402", "פקודת השידור מהטלפון ההורה לא נקראה", e);
         }
     }
 
@@ -198,7 +208,7 @@ public class SenderService extends Service {
 
     private void audioLoop() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            AppPrefs.state(this, "baby", "חסרה הרשאת מיקרופון");
+            ErrorReporter.report(this, "baby", "E301", "חסרה הרשאת מיקרופון", null);
             stopSelf();
             return;
         }
@@ -207,7 +217,9 @@ public class SenderService extends Service {
         try {
             recorder = new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, SAMPLE_RATE,
                     AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufferSize);
-            if (recorder.getState() != AudioRecord.STATE_INITIALIZED) throw new IllegalStateException("AudioRecord init failed");
+            if (recorder.getState() != AudioRecord.STATE_INITIALIZED) {
+                throw new IllegalStateException("AudioRecord init failed");
+            }
             recorder.startRecording();
             byte[] pcm = new byte[SAMPLES_PER_FRAME * 2];
             byte[] ulaw = new byte[SAMPLES_PER_FRAME];
@@ -219,8 +231,8 @@ public class SenderService extends Service {
                 sendEncrypted(PacketCodec.TYPE_AUDIO, ulaw, encoded);
             }
         } catch (Exception e) {
-            AppPrefs.state(this, "baby", "שגיאת מיקרופון");
-            updateNotification("שגיאת מיקרופון, יש לפתוח את ARGUS");
+            ErrorReporter.report(this, "baby", "E302", "המיקרופון לא הצליח להתחיל או להמשיך הקלטה", e);
+            updateNotification("שגיאת מיקרופון E302");
             stopSelf();
         } finally {
             if (recorder != null) {
@@ -254,8 +266,11 @@ public class SenderService extends Service {
                     byte[] clear = j.toString().getBytes(StandardCharsets.UTF_8);
                     sendEncrypted(PacketCodec.TYPE_STATUS, clear, clear.length);
                 }
-            } catch (Exception ignored) { }
-            try { Thread.sleep(5000); } catch (InterruptedException ignored) { }
+            } catch (Exception e) {
+                ErrorReporter.report(this, "baby", "E403", "שליחת מצב הטלפון נכשלה", e);
+            }
+            try { Thread.sleep(5000); }
+            catch (InterruptedException ignored) { Thread.currentThread().interrupt(); return; }
         }
     }
 
@@ -269,7 +284,9 @@ public class SenderService extends Service {
             wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "ARGUS:ChildWifi");
             wifiLock.setReferenceCounted(false);
             wifiLock.acquire();
-        } catch (Exception ignored) { }
+        } catch (Exception e) {
+            ErrorReporter.report(this, "baby", "E404", "לא ניתן לנעול את חיבור ה WiFi ברקע", e);
+        }
     }
 
     private Notification notification(String text) {

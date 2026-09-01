@@ -26,8 +26,6 @@ final class CameraStreamer {
     interface CaptureGate { boolean shouldCapture(); }
     interface FrameSink { void onJpeg(byte[] jpeg); }
 
-    // Conservative by design: this stays below the original audio-only relay's
-    // bandwidth ceiling, so camera works before the relay upgrade is deployed.
     private static final int CAPTURE_INTERVAL_MS = 800;
     private static final int MAX_JPEG_BYTES = 30 * 1024;
     private static final long TARGET_AREA = 320L * 240L;
@@ -57,16 +55,17 @@ final class CameraStreamer {
         if (running) return;
         running = true;
         if (context.checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            AppPrefs.state(context, "camera", "Camera permission missing");
+            ErrorReporter.report(context, "baby", "E303", "חסרה הרשאת מצלמה", null);
             return;
         }
 
-        thread = new HandlerThread("BabyCamera");
+        thread = new HandlerThread("ArgusCamera");
         thread.start();
         handler = new Handler(thread.getLooper());
 
         try {
             CameraManager manager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
+            if (manager == null) throw new IllegalStateException("CameraManager unavailable");
             String id = chooseCamera(manager);
             if (id == null) throw new IllegalStateException("No camera found");
             CameraCharacteristics characteristics = manager.getCameraCharacteristics(id);
@@ -84,19 +83,19 @@ final class CameraStreamer {
                     disconnected.close();
                     if (camera == disconnected) camera = null;
                     ready = false;
-                    AppPrefs.state(context, "camera", "Camera disconnected");
+                    ErrorReporter.report(context, "baby", "E305", "המצלמה התנתקה", null);
                 }
 
                 @Override public void onError(CameraDevice failed, int error) {
                     failed.close();
                     if (camera == failed) camera = null;
                     ready = false;
-                    AppPrefs.state(context, "camera", "Camera unavailable");
+                    ErrorReporter.report(context, "baby", "E306", "המצלמה אינה זמינה", new IllegalStateException("CameraDevice error=" + error));
                 }
             }, handler);
         } catch (Exception e) {
             ready = false;
-            AppPrefs.state(context, "camera", "Camera unavailable — audio still active");
+            ErrorReporter.report(context, "baby", "E306", "המצלמה אינה זמינה. המיקרופון עדיין יכול לעבוד", e);
         }
     }
 
@@ -118,23 +117,22 @@ final class CameraStreamer {
                         builder.set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation(characteristics));
                         request = builder.build();
                         ready = true;
-                        AppPrefs.state(context, "camera", "Camera ready");
                         handler.removeCallbacks(captureTask);
                         handler.post(captureTask);
                     } catch (Exception e) {
                         ready = false;
-                        AppPrefs.state(context, "camera", "Camera setup failed");
+                        ErrorReporter.report(context, "baby", "E307", "הגדרת המצלמה נכשלה", e);
                     }
                 }
 
                 @Override public void onConfigureFailed(CameraCaptureSession failed) {
                     ready = false;
-                    AppPrefs.state(context, "camera", "Camera setup failed");
+                    ErrorReporter.report(context, "baby", "E307", "הגדרת המצלמה נכשלה", null);
                 }
             }, handler);
         } catch (Exception e) {
             ready = false;
-            AppPrefs.state(context, "camera", "Camera setup failed");
+            ErrorReporter.report(context, "baby", "E307", "הגדרת המצלמה נכשלה", e);
         }
     }
 
@@ -144,8 +142,12 @@ final class CameraStreamer {
             CameraCaptureSession current = session;
             CaptureRequest currentRequest = request;
             if (ready && gate.shouldCapture() && current != null && currentRequest != null) {
-                try { current.capture(currentRequest, null, handler); }
-                catch (Exception ignored) { }
+                try {
+                    current.capture(currentRequest, null, handler);
+                } catch (Exception e) {
+                    ready = false;
+                    ErrorReporter.report(context, "baby", "E308", "צילום תמונה לשידור נכשל", e);
+                }
             }
             handler.postDelayed(this, CAPTURE_INTERVAL_MS);
         }
@@ -160,7 +162,11 @@ final class CameraStreamer {
             byte[] jpeg = new byte[buffer.remaining()];
             buffer.get(jpeg);
             if (jpeg.length > 0 && jpeg.length <= MAX_JPEG_BYTES) sink.onJpeg(jpeg);
-        } catch (Exception ignored) {
+            else if (jpeg.length > MAX_JPEG_BYTES) {
+                ErrorReporter.report(context, "baby", "E309", "תמונת המצלמה גדולה מדי לשליחה", new IllegalStateException("jpegBytes=" + jpeg.length));
+            }
+        } catch (Exception e) {
+            ErrorReporter.report(context, "baby", "E309", "קריאת תמונת המצלמה נכשלה", e);
         } finally {
             if (image != null) image.close();
         }
@@ -203,7 +209,9 @@ final class CameraStreamer {
         try {
             WindowManager wm = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
             if (wm != null && wm.getDefaultDisplay() != null) rotation = wm.getDefaultDisplay().getRotation();
-        } catch (Exception ignored) { }
+        } catch (Exception e) {
+            ErrorReporter.report(context, "baby", "E310", "לא ניתן לקרוא את כיוון המסך למצלמה", e);
+        }
 
         int deviceDegrees;
         switch (rotation) {
