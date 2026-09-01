@@ -107,7 +107,7 @@ export default {
   },
 };
 
-export class Room extends DurableObject {
+export class RoomV4 extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.sessions = new Map();

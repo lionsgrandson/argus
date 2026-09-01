@@ -11,7 +11,7 @@
     "bindings": [
       {
         "name": "ROOMS",
-        "class_name": "Room"
+        "class_name": "RoomV4"
       }
     ]
   },
@@ -19,6 +19,11 @@
     {
       "tag": "v1",
       "new_sqlite_classes": ["Room"]
+    },
+    {
+      "tag": "v2-pairing-reset-2026-09-01",
+      "new_sqlite_classes": ["RoomV4"],
+      "deleted_classes": ["Room"]
     }
   ]
 }
