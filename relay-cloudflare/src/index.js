@@ -271,3 +271,7 @@ export class RoomV4 extends DurableObject {
     }
   }
 }
+
+// Existing v1 Durable Objects still reference this export. Keep it available
+// while all new connections use the RoomV4 binding and fresh v4 namespace.
+export class Room extends RoomV4 {}
