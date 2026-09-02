@@ -23,12 +23,14 @@ public class ReceiverService extends Service {
 
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean peerOnline = new AtomicBoolean(false);
+    private final ArrayBlockingQueue<byte[]> audioQueue = new ArrayBlockingQueue<>(12);
     private final AtomicLong controlSequence = new AtomicLong(1);
     private final long controlSession = new SecureRandom().nextLong();
     private volatile SecureWebSocket ws;
     private PairingConfig pairing;
     private PacketCodec codec;
     private AudioTrack track;
+    private Thread audioPlaybackThread;
     private PowerManager.WakeLock wakeLock;
     private WifiManager.WifiLock wifiLock;
     private final ScheduledExecutorService watchdog = Executors.newSingleThreadScheduledExecutor();
@@ -87,6 +89,8 @@ public class ReceiverService extends Service {
                 stopSelf();
                 return START_NOT_STICKY;
             }
+            audioPlaybackThread = new Thread(this::audioPlaybackLoop, "ArgusParentAudio");
+            audioPlaybackThread.start();
             acquireLocks();
             watchdog.scheduleAtFixedRate(this::watchConnection, 3, 3, TimeUnit.SECONDS);
             new Thread(this::connectionLoop, "ArgusParentConnection").start();
@@ -107,7 +111,7 @@ public class ReceiverService extends Service {
                             .setSampleRate(SAMPLE_RATE)
                             .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                             .build())
-                    .setBufferSizeInBytes(Math.max(min, 3200))
+                    .setBufferSizeInBytes(Math.max(min, 1600))
                     .setTransferMode(AudioTrack.MODE_STREAM)
                     .build();
             track.play();
@@ -134,15 +138,10 @@ public class ReceiverService extends Service {
                     }
                     @Override public void onText(String text) {
                         if ("PEER:ONLINE".equals(text)) {
-                            peerOnline.set(true);
-                            AppPrefs.setPeerOnline(ReceiverService.this, "parent", true);
-                            AppPrefs.setPairConfirmed(ReceiverService.this, true);
-                            ErrorReporter.clear(ReceiverService.this, "parent");
-                            AppPrefs.state(ReceiverService.this, "parent", "מחובר");
-                            updateNotification("מחובר");
-                            sendStreamControl();
+                            markPeerOnline();
                         } else if ("PEER:OFFLINE".equals(text)) {
                             peerOnline.set(false);
+                            audioQueue.clear();
                             AppPrefs.setPeerOnline(ReceiverService.this, "parent", false);
                             AppPrefs.state(ReceiverService.this, "parent", "טלפון הילד התנתק");
                             if (hadLiveMedia) triggerConnectionAlarm("טלפון הילד התנתק");
@@ -153,6 +152,7 @@ public class ReceiverService extends Service {
                     }
                     @Override public void onClosed(String reason) {
                         peerOnline.set(false);
+                        audioQueue.clear();
                         AppPrefs.setPeerOnline(ReceiverService.this, "parent", false);
                         synchronized (closedLock) { closed.set(true); closedLock.notifyAll(); }
                     }
@@ -178,12 +178,13 @@ public class ReceiverService extends Service {
                 ws = null;
                 if (old != null) old.close();
                 peerOnline.set(false);
+                audioQueue.clear();
                 AppPrefs.setPeerOnline(this, "parent", false);
             }
             if (running.get()) {
                 try { Thread.sleep(delayMs); }
                 catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
-                delayMs = Math.min(delayMs * 2, 15000);
+                delayMs = Math.min(delayMs * 2, 5000);
             }
         }
     }
@@ -216,15 +217,24 @@ public class ReceiverService extends Service {
             }
             if (d.sequence <= lastSequence) return;
             lastSequence = d.sequence;
+            markPeerOnline();
 
             if (d.type == PacketCodec.TYPE_AUDIO) {
                 if (AppPrefs.parentMicEnabled(this)) {
                     byte[] pcm = new byte[d.payload.length * 2];
                     int n = MuLaw.decodeToPcm16(d.payload, pcm);
-                    AudioTrack t = track;
-                    if (t != null) t.write(pcm, 0, n, AudioTrack.WRITE_BLOCKING);
+                    if (n != pcm.length) {
+                        byte[] exact = new byte[n];
+                        System.arraycopy(pcm, 0, exact, 0, n);
+                        pcm = exact;
+                    }
+                    if (!audioQueue.offer(pcm)) {
+                        audioQueue.poll();
+                        audioQueue.offer(pcm);
+                    }
                     lastAudioAt = System.currentTimeMillis();
                     hadLiveMedia = true;
+                    clearRecoveredMediaError();
                     clearConnectionAlarm();
                     publishLiveState();
                 }
@@ -233,6 +243,7 @@ public class ReceiverService extends Service {
                     LiveVideoStore.put(d.payload);
                     lastVideoAt = System.currentTimeMillis();
                     hadLiveMedia = true;
+                    clearRecoveredMediaError();
                     clearConnectionAlarm();
                     publishLiveState();
                 }
@@ -250,6 +261,35 @@ public class ReceiverService extends Service {
             }
         } catch (Exception e) {
             ErrorReporter.report(this, "parent", "E401", "מידע מוצפן מהטלפון הילד לא נקרא", e);
+        }
+    }
+
+    private void markPeerOnline() {
+        if (peerOnline.compareAndSet(false, true)) {
+            AppPrefs.setPeerOnline(this, "parent", true);
+            AppPrefs.setPairConfirmed(this, true);
+            ErrorReporter.clear(this, "parent");
+            AppPrefs.state(this, "parent", "מחובר");
+            updateNotification("מחובר");
+            sendStreamControl();
+        }
+    }
+
+    private void audioPlaybackLoop() {
+        while (running.get()) {
+            try {
+                byte[] pcm = audioQueue.poll(1, TimeUnit.SECONDS);
+                if (pcm == null) continue;
+                AudioTrack current = track;
+                if (current != null && AppPrefs.parentMicEnabled(this)) {
+                    current.write(pcm, 0, pcm.length, AudioTrack.WRITE_BLOCKING);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            } catch (Exception e) {
+                ErrorReporter.report(this, "parent", "E304", "השמעת השמע בטלפון ההורה נכשלה", e);
+            }
         }
     }
 
@@ -272,7 +312,9 @@ public class ReceiverService extends Service {
     }
 
     private void watchConnection() {
-        if (!running.get() || !hadLiveMedia || !peerOnline.get()) return;
+        if (!running.get() || !peerOnline.get()) return;
+        sendStreamControl();
+        if (!hadLiveMedia) return;
         boolean camera = AppPrefs.parentCameraEnabled(this);
         boolean mic = AppPrefs.parentMicEnabled(this);
         if (!camera && !mic) return;
@@ -284,6 +326,12 @@ public class ReceiverService extends Service {
                 || (camera && mic && staleAudio && staleVideo)) {
             ErrorReporter.report(this, "parent", "E405", "החיבור קיים אבל לא מתקבל שידור מטלפון הילד", null);
             triggerConnectionAlarm("לא התקבל שידור מטלפון הילד");
+        }
+    }
+
+    private void clearRecoveredMediaError() {
+        if ("E405".equals(AppPrefs.lastErrorCode(this))) {
+            ErrorReporter.clear(this, "parent");
         }
     }
 
@@ -395,6 +443,11 @@ public class ReceiverService extends Service {
         ws = null;
         if (socket != null) socket.close();
         watchdog.shutdownNow();
+        audioQueue.clear();
+        if (audioPlaybackThread != null) {
+            audioPlaybackThread.interrupt();
+            audioPlaybackThread = null;
+        }
         clearConnectionAlarm();
         if (track != null) {
             try { track.stop(); } catch (Exception ignored) { }

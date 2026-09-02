@@ -97,11 +97,17 @@ public final class ErrorReporter {
         String rawDetail = technicalDetail(error);
         AppPrefs.saveError(context, safeRole, code, userMessage, rawDetail);
         int count = AppPrefs.lastErrorCount(context);
-        if ("baby".equals(safeRole) || "parent".equals(safeRole)) {
-            AppPrefs.setPeerOnline(context, safeRole, false);
+        if ("parent".equals(safeRole)) {
             AppPrefs.state(context, safeRole, "שגיאה " + code + ": " + userMessage);
         }
         Log.e(TAG, code + " [" + safeRole + "] " + userMessage + (rawDetail.isEmpty() ? "" : " | " + rawDetail), error);
+
+        // The Child phone stays silent and unobtrusive. Errors remain in the
+        // diagnostic log/preferences, but never create a toast or notification.
+        boolean childPhone = "baby".equals(safeRole)
+                || "baby".equals(AppPrefs.prefs(context).getString("setup_role", ""));
+        if (childPhone) return;
+
         if (count == 1) {
             new Handler(Looper.getMainLooper()).post(() ->
                     Toast.makeText(context.getApplicationContext(), "ARGUS " + code + ": " + userMessage, Toast.LENGTH_LONG).show());

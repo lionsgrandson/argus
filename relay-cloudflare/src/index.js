@@ -4,6 +4,7 @@ const PROTOCOL_VERSION = "4";
 const PAIRING_EPOCH = "reset-2026-09-01-v4";
 const MAX_FRAME_BYTES = 768 * 1024;
 const MAX_BYTES_PER_10S = 32 * 1024 * 1024;
+const MAX_VIDEO_BUFFER_BYTES = 192 * 1024;
 
 function validToken(value, min, max) {
   return typeof value === "string" && value.length >= min && value.length <= max && /^[A-Za-z0-9_-]+$/.test(value);
@@ -64,6 +65,7 @@ export default {
           video: true,
           parentStreamControl: true,
           errorCodes: true,
+          staleVideoDropping: true,
         },
         { headers: { "cache-control": "no-store" } },
       );
@@ -222,6 +224,11 @@ export class RoomV4 extends DurableObject {
     const targetRole = session.role === "baby" ? "parent" : "baby";
     for (const [socket, state] of this.sessions) {
       if (state.role === targetRole) {
+        const bytes = new Uint8Array(message);
+        const packetType = bytes.length > 1 ? bytes[1] : 0;
+        if (packetType === 3 && (socket.bufferedAmount || 0) > MAX_VIDEO_BUFFER_BYTES) {
+          continue;
+        }
         try {
           socket.send(message);
         } catch (error) {

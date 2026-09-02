@@ -16,6 +16,9 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public class SenderService extends Service {
     private static final int NOTIF_ID = 1001;
+    private static final int OLD_ERROR_NOTIF_ID = 1202;
+    private static final int OLD_SETUP_ERROR_NOTIF_ID = 1203;
+    private static final String CHANNEL_ID = "argus_sender_silent_v2";
     private static final int SAMPLE_RATE = 8000;
     private static final int SAMPLES_PER_FRAME = 160;
     private static final String ACTION_STOP = "com.example.babymonitor.STOP_BABY";
@@ -40,6 +43,8 @@ public class SenderService extends Service {
     @Override public void onCreate() {
         super.onCreate();
         createChannel();
+        ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).cancel(OLD_ERROR_NOTIF_ID);
+        ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).cancel(OLD_SETUP_ERROR_NOTIF_ID);
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -157,7 +162,7 @@ public class SenderService extends Service {
             } catch (Exception e) {
                 AppPrefs.setPeerOnline(this, "baby", false);
                 ErrorReporter.reportConnection(this, "baby", e);
-                updateNotification("שגיאת חיבור " + AppPrefs.lastErrorCode(this));
+                updateNotification("");
             } finally {
                 SecureWebSocket old = ws;
                 ws = null;
@@ -168,7 +173,7 @@ public class SenderService extends Service {
             if (running.get()) {
                 try { Thread.sleep(delayMs); }
                 catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
-                delayMs = Math.min(delayMs * 2, 15000);
+                delayMs = Math.min(delayMs * 2, 5000);
             }
         }
     }
@@ -232,7 +237,7 @@ public class SenderService extends Service {
             }
         } catch (Exception e) {
             ErrorReporter.report(this, "baby", "E302", "המיקרופון לא הצליח להתחיל או להמשיך הקלטה", e);
-            updateNotification("שגיאת מיקרופון E302");
+            updateNotification("");
             stopSelf();
         } finally {
             if (recorder != null) {
@@ -269,7 +274,7 @@ public class SenderService extends Service {
             } catch (Exception e) {
                 ErrorReporter.report(this, "baby", "E403", "שליחת מצב הטלפון נכשלה", e);
             }
-            try { Thread.sleep(5000); }
+            try { Thread.sleep(2000); }
             catch (InterruptedException ignored) { Thread.currentThread().interrupt(); return; }
         }
     }
@@ -289,17 +294,17 @@ public class SenderService extends Service {
         }
     }
 
-    private Notification notification(String text) {
+    private Notification notification(String ignored) {
         Intent open = new Intent(this, MainActivity.class);
         PendingIntent content = PendingIntent.getActivity(this, 0, open,
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         Intent stop = new Intent(this, SenderService.class).setAction(ACTION_STOP);
         PendingIntent stopPi = PendingIntent.getService(this, 10, stop,
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-        return new Notification.Builder(this, "argus_sender")
+        return new Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
                 .setContentTitle("ARGUS פעיל")
-                .setContentText(text)
+                .setContentText("פועל ברקע")
                 .setCategory(Notification.CATEGORY_SERVICE)
                 .setPriority(Notification.PRIORITY_LOW)
                 .setSound(null)
@@ -316,7 +321,7 @@ public class SenderService extends Service {
 
     private void createChannel() {
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        NotificationChannel c = new NotificationChannel("argus_sender", "שירות הרקע של ARGUS", NotificationManager.IMPORTANCE_LOW);
+        NotificationChannel c = new NotificationChannel(CHANNEL_ID, "שירות הרקע של ARGUS", NotificationManager.IMPORTANCE_LOW);
         c.setDescription("שירות השידור של טלפון הילד");
         c.setSound(null, null);
         c.enableVibration(false);

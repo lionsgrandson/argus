@@ -126,7 +126,8 @@ final class AppPrefs {
         String code = lastErrorCode(c);
         long at = lastErrorAt(c);
         String errorRole = lastErrorRole(c);
-        if (!code.isEmpty() && System.currentTimeMillis() - at <= ERROR_VISIBLE_MS
+        if (!"baby".equals(role)
+                && !code.isEmpty() && System.currentTimeMillis() - at <= ERROR_VISIBLE_MS
                 && (role.equals(errorRole) || "setup".equals(errorRole))) {
             return "שגיאה " + code + ": " + lastErrorMessage(c);
         }

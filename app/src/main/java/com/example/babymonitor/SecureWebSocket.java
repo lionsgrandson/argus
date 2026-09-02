@@ -55,7 +55,6 @@ final class SecureWebSocket {
             ErrorReporter.clear(role);
         } catch (Exception e) {
             closeSilently();
-            ErrorReporter.reportConnection(role, e);
             throw e;
         }
     }
@@ -151,6 +150,8 @@ final class SecureWebSocket {
             SSLSocket ssl = null;
             try {
                 tcp.connect(new InetSocketAddress(address, port), 8000);
+                tcp.setTcpNoDelay(true);
+                tcp.setKeepAlive(true);
                 tcp.setSoTimeout(30000);
                 SSLSocketFactory sf = (SSLSocketFactory) SSLSocketFactory.getDefault();
                 ssl = (SSLSocket) sf.createSocket(tcp, host, port, true);
@@ -172,7 +173,7 @@ final class SecureWebSocket {
     private void heartbeatLoop() {
         while (open) {
             try {
-                Thread.sleep(15000);
+                Thread.sleep(10000);
                 if (open) sendFrame(0x9, "hb".getBytes(StandardCharsets.US_ASCII));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();

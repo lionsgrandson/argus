@@ -2,6 +2,7 @@ package com.example.babymonitor;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.*;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
@@ -48,12 +49,13 @@ public class MainActivity extends Activity {
     private boolean scanInProgress = false;
     private boolean updatingSwitches = false;
     private String renderedSetupRole = "";
+    private String lastShownParentErrorCode = "";
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable refreshTask = new Runnable() {
         @Override public void run() {
             refreshState();
-            handler.postDelayed(this, 500);
+            handler.postDelayed(this, 250);
         }
     };
 
@@ -66,6 +68,7 @@ public class MainActivity extends Activity {
     @Override protected void onResume() {
         super.onResume();
         showCurrentScreen();
+        if (setupPanel.getVisibility() == View.VISIBLE) renderPermissions(selectedRole());
         handler.removeCallbacks(refreshTask);
         handler.post(refreshTask);
 
@@ -719,8 +722,31 @@ public class MainActivity extends Activity {
         if (livePanel.getVisibility() == View.VISIBLE) renderLive(role);
         if (setupPanel.getVisibility() == View.VISIBLE) {
             updateSetupStatus(role);
-            renderPermissions(role);
         }
+        showParentErrorIfNeeded(role);
+    }
+
+    private void showParentErrorIfNeeded(String role) {
+        if (!"parent".equals(role)) return;
+        String code = AppPrefs.lastErrorCode(this);
+        String errorRole = AppPrefs.lastErrorRole(this);
+        if (code.isEmpty()) {
+            lastShownParentErrorCode = "";
+            return;
+        }
+        if (!"parent".equals(errorRole) && !"setup".equals(errorRole)) return;
+        if (code.equals(lastShownParentErrorCode) || isFinishing()) return;
+        lastShownParentErrorCode = code;
+
+        String message = AppPrefs.lastErrorMessage(this);
+        String detail = AppPrefs.lastErrorDetail(this);
+        String body = message == null ? "" : message;
+        if (detail != null && !detail.isEmpty()) body += "\n\n" + detail;
+        new AlertDialog.Builder(this)
+                .setTitle("שגיאת ARGUS " + code)
+                .setMessage(body)
+                .setPositiveButton("אישור", null)
+                .show();
     }
 
     private void changePhoneRole() {

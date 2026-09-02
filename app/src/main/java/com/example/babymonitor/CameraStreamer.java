@@ -26,8 +26,8 @@ final class CameraStreamer {
     interface CaptureGate { boolean shouldCapture(); }
     interface FrameSink { void onJpeg(byte[] jpeg); }
 
-    private static final int CAPTURE_INTERVAL_MS = 800;
-    private static final int MAX_JPEG_BYTES = 30 * 1024;
+    private static final int CAPTURE_INTERVAL_MS = 250;
+    private static final int MAX_JPEG_BYTES = 48 * 1024;
     private static final long TARGET_AREA = 320L * 240L;
 
     private final Context context;
@@ -113,7 +113,7 @@ final class CameraStreamer {
                         CaptureRequest.Builder builder = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
                         builder.addTarget(reader.getSurface());
                         builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON);
-                        builder.set(CaptureRequest.JPEG_QUALITY, (byte) 30);
+                        builder.set(CaptureRequest.JPEG_QUALITY, (byte) 35);
                         builder.set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation(characteristics));
                         request = builder.build();
                         ready = true;

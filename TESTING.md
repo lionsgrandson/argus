@@ -18,6 +18,10 @@ Before relying on ARGUS for a long session, test these cases with the actual two
 14. Reboot the Child phone while transmission is active. On Android versions that permit automatic background camera/microphone restart, verify ARGUS resumes automatically. On newer Android versions that enforce the platform restriction, verify the **Resume ARGUS** notification appears and tapping it resumes transmission immediately without repairing or reconfiguring.
 15. Open **Advanced settings → Background battery settings** and verify ARGUS can be set to the least restrictive battery mode available on the device.
 16. Rotate the pairing QR and verify the old Parent credentials no longer work in the new room.
+17. While live audio/video is arriving, verify the Parent connection bar remains green even if an individual media packet is rejected.
+18. Temporarily slow the Parent network and verify old camera frames are dropped instead of playing back with an increasing delay.
+19. Trigger a Child-side camera or network error and verify the Child shows only the silent persistent background-service notification.
+20. Trigger a Parent-side connection error and verify the Parent shows both an in-app error dialog and a system notification.
 17. Verify the relay `/health` endpoint is reachable through HTTPS and that the app uses only the configured `wss://.../ws` URL.
 
 Android camera/background behavior can vary by manufacturer, so the screen-off, task-removal, battery-mode, and reboot tests on the exact Child phone model are mandatory for reliability testing.
