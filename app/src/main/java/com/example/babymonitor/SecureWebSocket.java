@@ -179,7 +179,6 @@ final class SecureWebSocket {
                 Thread.currentThread().interrupt();
                 return;
             } catch (Exception e) {
-                if (open) ErrorReporter.reportConnection(role, e);
                 closeSilently();
                 return;
             }
@@ -221,7 +220,6 @@ final class SecureWebSocket {
                 else if (opcode == 0x8) {
                     reason = "server closed connection";
                     unexpectedClose = true;
-                    ErrorReporter.report(role, "E208", "שרת החיבור סגר את החיבור", null);
                     break;
                 } else if (opcode == 0x9) sendFrame(0xA, payload);
                 else if (opcode == 0xA) { }
@@ -229,7 +227,6 @@ final class SecureWebSocket {
         } catch (Exception e) {
             if (open) {
                 unexpectedClose = true;
-                ErrorReporter.reportConnection(role, e);
                 listener.onError(e);
             }
             reason = e.getMessage() == null ? "connection error" : e.getMessage();

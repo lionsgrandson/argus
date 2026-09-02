@@ -10,7 +10,7 @@ Before relying on ARGUS for a long session, test these cases with the actual two
 6. Walk far enough away to ensure the phones are not communicating over the local LAN/Bluetooth.
 7. Confirm the camera orientation is correct and the image updates continuously enough for monitoring.
 8. Speak softly, play normal room sounds, and confirm acceptable latency/audio quality.
-9. Disconnect the Child phone from the internet after monitoring has gone live; verify the Parent alarm occurs after roughly 8 seconds.
+9. Disconnect the Child phone from the internet after monitoring has gone live; verify the Parent error appears only if the outage lasts roughly 10 seconds.
 10. Restore internet and verify automatic reconnection and that camera/audio resume.
 11. Verify Child battery percentage and charging status update on the Parent phone.
 12. Let the Child battery fall below 20% while unplugged and verify the low-battery warning.
@@ -22,6 +22,6 @@ Before relying on ARGUS for a long session, test these cases with the actual two
 18. Temporarily slow the Parent network and verify old camera frames are dropped instead of playing back with an increasing delay.
 19. Trigger a Child-side camera or network error and verify the Child shows only the silent persistent background-service notification.
 20. Trigger a Parent-side connection error and verify the Parent shows both an in-app error dialog and a system notification.
-17. Verify the relay `/health` endpoint is reachable through HTTPS and that the app uses only the configured `wss://.../ws` URL.
+21. Verify the relay `/health` endpoint is reachable through HTTPS and that the app uses only the configured `wss://.../ws` URL.
 
 Android camera/background behavior can vary by manufacturer, so the screen-off, task-removal, battery-mode, and reboot tests on the exact Child phone model are mandatory for reliability testing.

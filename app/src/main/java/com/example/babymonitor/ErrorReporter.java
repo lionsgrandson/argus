@@ -20,7 +20,7 @@ import javax.net.ssl.SSLException;
 
 public final class ErrorReporter {
     private static final String TAG = "ARGUS";
-    private static final String CHANNEL = "argus_errors";
+    private static final String CHANNEL = "argus_parent_errors_silent_v2";
     private static final int NOTIF_PARENT = 1201;
     private static final int NOTIF_BABY = 1202;
     private static final int NOTIF_SETUP = 1203;
@@ -166,6 +166,8 @@ public final class ErrorReporter {
         if (nm == null) return;
         NotificationChannel channel = new NotificationChannel(CHANNEL, "שגיאות ARGUS", NotificationManager.IMPORTANCE_HIGH);
         channel.setDescription("קודי שגיאה ופרטי תקלות בחיבור ובשידור");
+        channel.setSound(null, null);
+        channel.enableVibration(false);
         nm.createNotificationChannel(channel);
     }
 

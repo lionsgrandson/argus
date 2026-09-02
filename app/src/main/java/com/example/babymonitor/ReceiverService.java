@@ -7,6 +7,7 @@ import android.media.*;
 import android.net.wifi.WifiManager;
 import android.os.*;
 import org.json.JSONObject;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.concurrent.*;
@@ -15,7 +16,10 @@ import java.util.concurrent.atomic.*;
 public class ReceiverService extends Service {
     private static final int NOTIF_ID = 1002;
     private static final int ALERT_ID = 1099;
+    private static final int OLD_ERROR_NOTIF_ID = 1201;
     private static final int SAMPLE_RATE = 8000;
+    private static final long MEDIA_GRACE_MS = 12000L;
+    private static final long DISCONNECT_GRACE_MS = 10000L;
     static final String ACTION_SET_STREAM = "com.example.babymonitor.SET_STREAM";
     static final String EXTRA_CAMERA = "camera";
     static final String EXTRA_MIC = "mic";
@@ -37,8 +41,11 @@ public class ReceiverService extends Service {
     private volatile long lastAudioAt = 0L;
     private volatile long lastVideoAt = 0L;
     private volatile long lastUiStateAt = 0L;
-    private volatile long lastAlertAt = 0L;
-    private volatile boolean hadLiveMedia = false;
+    private volatile long mediaChangedAt = System.currentTimeMillis();
+    private volatile long disconnectedAt = 0L;
+    private volatile Throwable lastConnectionError;
+    private volatile boolean connectionErrorReported = false;
+    private volatile boolean mediaErrorReported = false;
     private volatile boolean lowBatteryNotified = false;
     private volatile long currentSession = Long.MIN_VALUE;
     private volatile long lastSequence = 0L;
@@ -46,6 +53,8 @@ public class ReceiverService extends Service {
     @Override public void onCreate() {
         super.onCreate();
         createChannels();
+        ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).cancel(OLD_ERROR_NOTIF_ID);
+        clearConnectionAlarm();
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -59,6 +68,7 @@ public class ReceiverService extends Service {
             boolean camera = intent.getBooleanExtra(EXTRA_CAMERA, false);
             boolean mic = intent.getBooleanExtra(EXTRA_MIC, true);
             AppPrefs.setParentMedia(this, camera, mic);
+            beginMediaGrace(camera, mic);
             if (running.get()) sendStreamControl();
             return START_STICKY;
         }
@@ -68,7 +78,6 @@ public class ReceiverService extends Service {
         } else {
             startForeground(NOTIF_ID, notification("מתחיל"));
         }
-
         if (running.compareAndSet(false, true)) {
             LiveVideoStore.clear();
             pairing = AppPrefs.pairing(this);
@@ -140,25 +149,19 @@ public class ReceiverService extends Service {
                         if ("PEER:ONLINE".equals(text)) {
                             markPeerOnline();
                         } else if ("PEER:OFFLINE".equals(text)) {
-                            peerOnline.set(false);
-                            audioQueue.clear();
-                            AppPrefs.setPeerOnline(ReceiverService.this, "parent", false);
+                            markDisconnected(new IOException("Child phone is offline"));
                             AppPrefs.state(ReceiverService.this, "parent", "טלפון הילד התנתק");
-                            if (hadLiveMedia) triggerConnectionAlarm("טלפון הילד התנתק");
                         }
                     }
                     @Override public void onBinary(byte[] data) {
                         handleEncrypted(data);
                     }
                     @Override public void onClosed(String reason) {
-                        peerOnline.set(false);
-                        audioQueue.clear();
-                        AppPrefs.setPeerOnline(ReceiverService.this, "parent", false);
+                        if (running.get()) markDisconnected(new IOException(reason));
                         synchronized (closedLock) { closed.set(true); closedLock.notifyAll(); }
                     }
                     @Override public void onError(Exception error) {
-                        peerOnline.set(false);
-                        AppPrefs.setPeerOnline(ReceiverService.this, "parent", false);
+                        markDisconnected(error);
                         AppPrefs.state(ReceiverService.this, "parent", "מתחבר מחדש");
                     }
                 });
@@ -169,17 +172,13 @@ public class ReceiverService extends Service {
                     while (running.get() && !closed.get()) closedLock.wait(1000);
                 }
             } catch (Exception e) {
-                AppPrefs.setPeerOnline(this, "parent", false);
-                ErrorReporter.reportConnection(this, "parent", e);
-                updateNotification("שגיאת חיבור " + AppPrefs.lastErrorCode(this));
-                if (hadLiveMedia) triggerConnectionAlarm("טלפון ההורה איבד את החיבור");
+                markDisconnected(e);
+                updateNotification("מתחבר מחדש");
             } finally {
                 SecureWebSocket old = ws;
                 ws = null;
                 if (old != null) old.close();
-                peerOnline.set(false);
-                audioQueue.clear();
-                AppPrefs.setPeerOnline(this, "parent", false);
+                if (running.get()) markDisconnected(null);
             }
             if (running.get()) {
                 try { Thread.sleep(delayMs); }
@@ -200,7 +199,9 @@ public class ReceiverService extends Service {
             long next = controlSequence.getAndIncrement();
             socket.sendBinary(codec.encrypt(PacketCodec.TYPE_STREAM_CONTROL, controlSession, next, clear, clear.length));
         } catch (Exception e) {
-            ErrorReporter.report(this, "parent", "E402", "שליחת פקודת השידור לטלפון הילד נכשלה", e);
+            markDisconnected(e);
+            SecureWebSocket socket = ws;
+            if (socket != null) socket.close();
         }
     }
 
@@ -233,7 +234,6 @@ public class ReceiverService extends Service {
                         audioQueue.offer(pcm);
                     }
                     lastAudioAt = System.currentTimeMillis();
-                    hadLiveMedia = true;
                     clearRecoveredMediaError();
                     clearConnectionAlarm();
                     publishLiveState();
@@ -242,7 +242,6 @@ public class ReceiverService extends Service {
                 if (AppPrefs.parentCameraEnabled(this)) {
                     LiveVideoStore.put(d.payload);
                     lastVideoAt = System.currentTimeMillis();
-                    hadLiveMedia = true;
                     clearRecoveredMediaError();
                     clearConnectionAlarm();
                     publishLiveState();
@@ -266,6 +265,10 @@ public class ReceiverService extends Service {
 
     private void markPeerOnline() {
         if (peerOnline.compareAndSet(false, true)) {
+            disconnectedAt = 0L;
+            lastConnectionError = null;
+            connectionErrorReported = false;
+            beginMediaGrace(AppPrefs.parentCameraEnabled(this), AppPrefs.parentMicEnabled(this));
             AppPrefs.setPeerOnline(this, "parent", true);
             AppPrefs.setPairConfirmed(this, true);
             ErrorReporter.clear(this, "parent");
@@ -273,6 +276,24 @@ public class ReceiverService extends Service {
             updateNotification("מחובר");
             sendStreamControl();
         }
+    }
+
+    private void markDisconnected(Throwable error) {
+        peerOnline.set(false);
+        audioQueue.clear();
+        AppPrefs.setPeerOnline(this, "parent", false);
+        if (disconnectedAt == 0L) disconnectedAt = System.currentTimeMillis();
+        if (error != null) lastConnectionError = error;
+    }
+
+    private void beginMediaGrace(boolean camera, boolean mic) {
+        long now = System.currentTimeMillis();
+        mediaChangedAt = now;
+        mediaErrorReported = false;
+        if (camera) lastVideoAt = now;
+        if (mic) lastAudioAt = now;
+        if ("E405".equals(AppPrefs.lastErrorCode(this))) ErrorReporter.clear(this, "parent");
+        clearConnectionAlarm();
     }
 
     private void audioPlaybackLoop() {
@@ -312,57 +333,37 @@ public class ReceiverService extends Service {
     }
 
     private void watchConnection() {
-        if (!running.get() || !peerOnline.get()) return;
-        sendStreamControl();
-        if (!hadLiveMedia) return;
+        if (!running.get()) return;
+        long now = System.currentTimeMillis();
+        if (!peerOnline.get()) {
+            if (disconnectedAt > 0L && now - disconnectedAt >= DISCONNECT_GRACE_MS
+                    && !connectionErrorReported) {
+                connectionErrorReported = true;
+                Throwable error = lastConnectionError;
+                if (error == null) error = new IOException("Connection did not recover");
+                ErrorReporter.reportConnection(this, "parent", error);
+            }
+            return;
+        }
         boolean camera = AppPrefs.parentCameraEnabled(this);
         boolean mic = AppPrefs.parentMicEnabled(this);
         if (!camera && !mic) return;
-        long now = System.currentTimeMillis();
-        boolean staleAudio = mic && now - lastAudioAt > 8000;
-        boolean staleVideo = camera && now - lastVideoAt > 8000;
+        if (now - mediaChangedAt < MEDIA_GRACE_MS) return;
+        boolean staleAudio = mic && now - lastAudioAt > MEDIA_GRACE_MS;
+        boolean staleVideo = camera && now - lastVideoAt > MEDIA_GRACE_MS;
         if ((mic && !camera && staleAudio)
                 || (camera && !mic && staleVideo)
                 || (camera && mic && staleAudio && staleVideo)) {
+            if (mediaErrorReported) return;
+            mediaErrorReported = true;
             ErrorReporter.report(this, "parent", "E405", "החיבור קיים אבל לא מתקבל שידור מטלפון הילד", null);
-            triggerConnectionAlarm("לא התקבל שידור מטלפון הילד");
         }
     }
 
     private void clearRecoveredMediaError() {
+        mediaErrorReported = false;
         if ("E405".equals(AppPrefs.lastErrorCode(this))) {
             ErrorReporter.clear(this, "parent");
-        }
-    }
-
-    private synchronized void triggerConnectionAlarm(String reason) {
-        if (!running.get() || !hadLiveMedia) return;
-        AppPrefs.state(this, "parent", "התראה: " + reason);
-        NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        Intent open = new Intent(this, MainActivity.class);
-        PendingIntent pi = PendingIntent.getActivity(this, 21, open,
-                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-        Notification n = new Notification.Builder(this, "argus_alerts")
-                .setSmallIcon(android.R.drawable.stat_notify_error)
-                .setContentTitle("החיבור של ARGUS נותק")
-                .setContentText(reason)
-                .setCategory(Notification.CATEGORY_ALARM)
-                .setPriority(Notification.PRIORITY_MAX)
-                .setOnlyAlertOnce(true)
-                .setAutoCancel(true)
-                .setContentIntent(pi)
-                .build();
-        nm.notify(ALERT_ID, n);
-        long now = System.currentTimeMillis();
-        if (now - lastAlertAt >= 10000) {
-            lastAlertAt = now;
-            try {
-                ToneGenerator tone = new ToneGenerator(AudioManager.STREAM_ALARM, 100);
-                tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 1000);
-                new Handler(Looper.getMainLooper()).postDelayed(tone::release, 1500);
-            } catch (Exception e) {
-                ErrorReporter.report(this, "parent", "E406", "לא ניתן להשמיע צליל התראת ניתוק", e);
-            }
         }
     }
 
@@ -422,12 +423,6 @@ public class ReceiverService extends Service {
     private void createChannels() {
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         nm.createNotificationChannel(new NotificationChannel("argus_receiver", "האזנה של ARGUS", NotificationManager.IMPORTANCE_LOW));
-        NotificationChannel alerts = new NotificationChannel("argus_alerts", "התראות חיבור של ARGUS", NotificationManager.IMPORTANCE_HIGH);
-        alerts.enableVibration(true);
-        alerts.setDescription("התראות כאשר החיבור מתנתק לאחר תחילת ההאזנה");
-        alerts.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM),
-                new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build());
-        nm.createNotificationChannel(alerts);
         NotificationChannel warnings = new NotificationChannel("argus_warnings", "התראות סוללה של ARGUS", NotificationManager.IMPORTANCE_DEFAULT);
         warnings.enableVibration(true);
         warnings.setDescription("התראות על סוללה נמוכה בטלפון הילד");

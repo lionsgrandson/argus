@@ -1,6 +1,6 @@
 # ARGUS error codes
 
-ARGUS version 3.2 introduces persistent error reporting. The last error is stored locally with its code, role, message, technical detail, timestamp, and repeat count. Connection and runtime errors also create an Android notification.
+ARGUS version 3.3.1 stores the last diagnostic error locally with its code, role, message, technical detail, timestamp, and repeat count. Child-phone errors remain silent. Parent connection errors appear only when a failure lasts beyond the automatic reconnect grace period.
 
 ## Pairing and setup
 
@@ -53,7 +53,6 @@ ARGUS version 3.2 introduces persistent error reporting. The last error is store
 | E403 | Child status/battery message failed |
 | E404 | Background WiFi lock could not be acquired |
 | E405 | Phones are connected but expected media stopped arriving |
-| E406 | Parent disconnect alarm tone could not play |
 
 ## Unexpected
 
