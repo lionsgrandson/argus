@@ -1,12 +1,25 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
+
+  // DO NOT CHANGE THIS NAME.
+  // Existing ARGUS APKs are already hardcoded to:
+  // baby-monitor-secure-relay.mosheschwartzberg.workers.dev
   "name": "baby-monitor-secure-relay",
+
   "main": "src/index.js",
-  "compatibility_date": "2026-08-23",
+  "compatibility_date": "2026-09-09",
+
+  // Keep the existing workers.dev hostname enabled for already-installed APKs.
+  "workers_dev": true,
+
+  // Production clients should use the stable workers.dev hostname, not preview URLs.
+  "preview_urls": false,
+
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1
   },
+
   "durable_objects": {
     "bindings": [
       {
@@ -15,13 +28,13 @@
       }
     ]
   },
+
+  // Keep the full migration history. Do not remove old migration entries.
   "migrations": [
     {
       "tag": "v1",
       "new_sqlite_classes": ["Room"]
     },
-    // Keep the legacy Room class allocated during this binding switch.
-    // Deleting it in the same migration is rejected by Cloudflare (10061).
     {
       "tag": "v2-pairing-reset-2026-09-01",
       "new_sqlite_classes": ["RoomV4"]
