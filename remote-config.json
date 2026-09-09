@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "configVersion": 1,
+  "refreshSeconds": 300,
+  "relayUrls": [
+    "wss://baby-monitor-secure-relay.mosheschwartzberg.workers.dev/ws"
+  ]
+}

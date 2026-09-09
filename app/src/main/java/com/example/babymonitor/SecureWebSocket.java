@@ -17,10 +17,12 @@ final class SecureWebSocket {
         void onError(Exception error);
     }
 
-    private final URI uri;
+    private final String baseUrl;
+    private final PairingConfig pairing;
     private final String authToken;
     private final String role;
     private final Listener listener;
+    private volatile URI uri;
     private volatile Socket socket;
     private volatile InputStream in;
     private volatile OutputStream out;
@@ -32,7 +34,44 @@ final class SecureWebSocket {
         if (baseUrl == null || baseUrl.trim().isEmpty()) {
             throw new ErrorReporter.ArgusException("E200", "כתובת שרת החיבור חסרה", "Relay URL is empty");
         }
-        URI base = new URI(baseUrl.trim());
+        validateBase(baseUrl.trim());
+        this.baseUrl = baseUrl.trim();
+        this.pairing = pairing;
+        this.authToken = pairing.authToken;
+        this.role = role;
+        this.listener = listener;
+    }
+
+    void connect() throws Exception {
+        Exception last = null;
+        try {
+            android.content.Context context = ArgusApp.context();
+            RemoteConfig.refreshIfDue(context);
+            List<String> candidates = RemoteConfig.relayCandidates(context, baseUrl);
+            if (candidates.isEmpty()) candidates = Collections.singletonList(baseUrl);
+
+            for (String candidate : candidates) {
+                try {
+                    this.uri = buildUri(candidate);
+                    doConnect();
+                    ErrorReporter.clear(role);
+                    return;
+                } catch (Exception e) {
+                    last = e;
+                    closeSilently();
+                }
+            }
+
+            if (last != null) throw last;
+            throw new ConnectException("Unable to connect to any ARGUS relay");
+        } catch (Exception e) {
+            closeSilently();
+            throw e;
+        }
+    }
+
+    private URI buildUri(String relayUrl) throws Exception {
+        URI base = new URI(relayUrl.trim());
         if (!"wss".equalsIgnoreCase(base.getScheme())) {
             throw new ErrorReporter.ArgusException("E200", "כתובת שרת החיבור אינה מאובטחת", "Relay URL must start with wss://");
         }
@@ -43,25 +82,25 @@ final class SecureWebSocket {
         if (path == null || path.isEmpty()) path = "/ws";
         String q = "room=" + enc(pairing.roomId) + "&role=" + enc(role) + "&v=4";
         if (base.getRawQuery() != null && !base.getRawQuery().isEmpty()) q = base.getRawQuery() + "&" + q;
-        this.uri = new URI("wss", null, base.getHost(), base.getPort(), path, q, null);
-        this.authToken = pairing.authToken;
-        this.role = role;
-        this.listener = listener;
+        return new URI("wss", null, base.getHost(), base.getPort(), path, q, null);
     }
 
-    void connect() throws Exception {
-        try {
-            doConnect();
-            ErrorReporter.clear(role);
-        } catch (Exception e) {
-            closeSilently();
-            throw e;
+    private static void validateBase(String relayUrl) throws Exception {
+        URI base = new URI(relayUrl);
+        if (!"wss".equalsIgnoreCase(base.getScheme())) {
+            throw new ErrorReporter.ArgusException("E200", "כתובת שרת החיבור אינה מאובטחת", "Relay URL must start with wss://");
+        }
+        if (base.getHost() == null) {
+            throw new ErrorReporter.ArgusException("E200", "כתובת שרת החיבור אינה תקינה", "Relay URL has no host");
         }
     }
 
     private void doConnect() throws Exception {
-        String host = uri.getHost();
-        int port = uri.getPort() > 0 ? uri.getPort() : 443;
+        URI current = uri;
+        if (current == null) throw new ConnectException("Relay URI is not prepared");
+
+        String host = current.getHost();
+        int port = current.getPort() > 0 ? current.getPort() : 443;
 
         SSLSocket ssl = connectTlsWithFallback(host, port);
         socket = ssl;
@@ -71,8 +110,8 @@ final class SecureWebSocket {
         byte[] keyBytes = new byte[16];
         random.nextBytes(keyBytes);
         String wsKey = Base64.getEncoder().encodeToString(keyBytes);
-        String hostHeader = host + ((uri.getPort() > 0 && uri.getPort() != 443) ? ":" + port : "");
-        String target = uri.getRawPath() + (uri.getRawQuery() == null ? "" : "?" + uri.getRawQuery());
+        String hostHeader = host + ((current.getPort() > 0 && current.getPort() != 443) ? ":" + port : "");
+        String target = current.getRawPath() + (current.getRawQuery() == null ? "" : "?" + current.getRawQuery());
         String request = "GET " + target + " HTTP/1.1\r\n" +
                 "Host: " + hostHeader + "\r\n" +
                 "Upgrade: websocket\r\n" +
@@ -80,7 +119,7 @@ final class SecureWebSocket {
                 "Sec-WebSocket-Key: " + wsKey + "\r\n" +
                 "Sec-WebSocket-Version: 13\r\n" +
                 "Authorization: Bearer " + authToken + "\r\n" +
-                "User-Agent: ARGUSAndroid/4\r\n\r\n";
+                "User-Agent: ARGUSAndroid/5\r\n\r\n";
         out.write(request.getBytes(StandardCharsets.US_ASCII));
         out.flush();
 
@@ -136,12 +175,15 @@ final class SecureWebSocket {
     }
 
     private void closeSilently() {
+        open = false;
         try { if (socket != null) socket.close(); } catch (Exception ignored) { }
         socket = null;
+        in = null;
+        out = null;
     }
 
     private static SSLSocket connectTlsWithFallback(String host, int port) throws Exception {
-        InetAddress[] addresses = InetAddress.getAllByName(host);
+        InetAddress[] addresses = ResilientDns.resolve(host);
         if (addresses == null || addresses.length == 0) throw new UnknownHostException(host);
 
         Exception lastError = null;
