@@ -17,11 +17,15 @@ final class RemoteConfig {
     private static final String PREF_LAST_ATTEMPT = "remote_config_last_attempt_v1";
     private static final String PREF_LAST_SUCCESS = "remote_config_last_success_v1";
     private static final String PREF_REFRESH_MS = "remote_config_refresh_ms_v1";
+    private static final String PREF_UPDATE_MANIFEST_URL = "remote_update_manifest_url_v1";
 
     private static final long DEFAULT_REFRESH_MS = 5 * 60 * 1000L;
     private static final long MIN_REFRESH_MS = 60 * 1000L;
     private static final long MAX_REFRESH_MS = 24 * 60 * 60 * 1000L;
     private static final int MAX_CONFIG_BYTES = 64 * 1024;
+
+    private static final String DEFAULT_UPDATE_MANIFEST_URL =
+            "https://baby-monitor-secure-relay.mosheschwartzberg.workers.dev/app-update";
 
     private static final String[] CONFIG_URLS = {
             "https://baby-monitor-secure-relay.mosheschwartzberg.workers.dev/client-config",
@@ -58,12 +62,16 @@ final class RemoteConfig {
             joined.append(relay);
         }
 
-        prefs.edit()
+        SharedPreferences.Editor editor = prefs.edit()
                 .putString(PREF_URLS, joined.toString())
                 .putInt(PREF_VERSION, best.version)
                 .putLong(PREF_LAST_SUCCESS, now)
-                .putLong(PREF_REFRESH_MS, best.refreshMs)
-                .apply();
+                .putLong(PREF_REFRESH_MS, best.refreshMs);
+
+        if (validHttps(best.updateManifestUrl)) {
+            editor.putString(PREF_UPDATE_MANIFEST_URL, best.updateManifestUrl);
+        }
+        editor.apply();
     }
 
     static List<String> relayCandidates(Context context, String currentRelay) {
@@ -84,6 +92,14 @@ final class RemoteConfig {
         if (validRelay(BuildConfig.DEFAULT_RELAY_URL)) out.add(BuildConfig.DEFAULT_RELAY_URL.trim());
 
         return new ArrayList<>(out);
+    }
+
+    static String updateManifestUrl(Context context) {
+        if (context != null) {
+            String stored = AppPrefs.prefs(context).getString(PREF_UPDATE_MANIFEST_URL, "");
+            if (validHttps(stored)) return stored.trim();
+        }
+        return DEFAULT_UPDATE_MANIFEST_URL;
     }
 
     private static Config parse(String body) {
@@ -108,7 +124,14 @@ final class RemoteConfig {
 
             long refreshSeconds = root.optLong("refreshSeconds", DEFAULT_REFRESH_MS / 1000L);
             long refreshMs = clampRefresh(refreshSeconds * 1000L);
-            return new Config(version, urls, refreshMs);
+
+            String updateManifestUrl = root.optString(
+                    "updateManifestUrl",
+                    DEFAULT_UPDATE_MANIFEST_URL
+            ).trim();
+            if (!validHttps(updateManifestUrl)) updateManifestUrl = DEFAULT_UPDATE_MANIFEST_URL;
+
+            return new Config(version, urls, refreshMs, updateManifestUrl);
         } catch (Exception ignored) {
             return null;
         }
@@ -127,6 +150,18 @@ final class RemoteConfig {
         }
     }
 
+    private static boolean validHttps(String value) {
+        if (value == null || value.trim().isEmpty()) return false;
+        try {
+            URI uri = new URI(value.trim());
+            return "https".equalsIgnoreCase(uri.getScheme())
+                    && uri.getHost() != null
+                    && !uri.getHost().trim().isEmpty();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     private static long clampRefresh(long value) {
         return Math.max(MIN_REFRESH_MS, Math.min(MAX_REFRESH_MS, value));
     }
@@ -135,11 +170,13 @@ final class RemoteConfig {
         final int version;
         final List<String> relayUrls;
         final long refreshMs;
+        final String updateManifestUrl;
 
-        Config(int version, List<String> relayUrls, long refreshMs) {
+        Config(int version, List<String> relayUrls, long refreshMs, String updateManifestUrl) {
             this.version = version;
             this.relayUrls = relayUrls;
             this.refreshMs = refreshMs;
+            this.updateManifestUrl = updateManifestUrl;
         }
     }
 
