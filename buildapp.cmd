@@ -219,6 +219,8 @@ echo You can copy ARGUS-debug.apk directly to the phones and install it.
 echo No GitHub Actions minutes were used.
 echo.
 
+if /I "%ARGUS_PUBLISHING%"=="1" exit /b 0
+
 explorer /select,"%APK_OUTPUT%" >nul 2>nul
 pause
 exit /b 0
