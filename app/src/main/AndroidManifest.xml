@@ -42,35 +42,30 @@
             </intent-filter>
         </activity>
 
-        <activity-alias android:name=".LauncherArgus" android:targetActivity=".MainActivity" android:enabled="false" android:exported="true" android:label="ARGUS" android:icon="@drawable/argus_icon">
-            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        <activity-alias
+            android:name=".LauncherBreakWatch"
+            android:targetActivity=".MainActivity"
+            android:enabled="true"
+            android:exported="true"
+            android:label="Break Watch"
+            android:icon="@drawable/argus_icon">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
         </activity-alias>
-        <activity-alias android:name=".LauncherBaby" android:targetActivity=".MainActivity" android:enabled="false" android:exported="true" android:label="Baby" android:icon="@drawable/argus_icon">
-            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
-        </activity-alias>
-        <activity-alias android:name=".LauncherBlockBaby" android:targetActivity=".MainActivity" android:enabled="true" android:exported="true" android:label="Block Baby" android:icon="@drawable/argus_icon">
-            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
-        </activity-alias>
-        <activity-alias android:name=".LauncherBabyBlock" android:targetActivity=".MainActivity" android:enabled="false" android:exported="true" android:label="Baby Block" android:icon="@drawable/argus_icon">
-            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
-        </activity-alias>
-        <activity-alias android:name=".LauncherBreakBaby" android:targetActivity=".MainActivity" android:enabled="false" android:exported="true" android:label="Break Baby" android:icon="@drawable/argus_icon">
-            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
-        </activity-alias>
-        <activity-alias android:name=".LauncherBabyBreak" android:targetActivity=".MainActivity" android:enabled="false" android:exported="true" android:label="Baby Break" android:icon="@drawable/argus_icon">
-            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
-        </activity-alias>
-        <activity-alias android:name=".LauncherTetrisBaby" android:targetActivity=".MainActivity" android:enabled="false" android:exported="true" android:label="Tetris Baby" android:icon="@drawable/argus_icon">
-            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
-        </activity-alias>
-        <activity-alias android:name=".LauncherBabyTetris" android:targetActivity=".MainActivity" android:enabled="false" android:exported="true" android:label="Baby Tetris" android:icon="@drawable/argus_icon">
-            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
-        </activity-alias>
-        <activity-alias android:name=".LauncherArgusBaby" android:targetActivity=".MainActivity" android:enabled="false" android:exported="true" android:label="ARGUS Baby" android:icon="@drawable/argus_icon">
-            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
-        </activity-alias>
-        <activity-alias android:name=".LauncherBabyArgus" android:targetActivity=".MainActivity" android:enabled="false" android:exported="true" android:label="Baby ARGUS" android:icon="@drawable/argus_icon">
-            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+
+        <activity-alias
+            android:name=".LauncherArgus"
+            android:targetActivity=".MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:label="ARGUS"
+            android:icon="@drawable/argus_icon">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
         </activity-alias>
 
         <activity android:name=".ArgusQrScannerActivity" android:exported="false" android:screenOrientation="portrait" />
