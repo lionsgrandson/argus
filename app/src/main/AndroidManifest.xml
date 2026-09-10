@@ -69,6 +69,7 @@
         </activity-alias>
 
         <activity android:name=".ArgusQrScannerActivity" android:exported="false" android:screenOrientation="portrait" />
+        <activity android:name=".SettingsActivity" android:exported="false" android:screenOrientation="portrait" />
         <activity android:name=".UpdateActivity" android:exported="false" android:screenOrientation="portrait" />
 
         <receiver android:name=".BootReceiver" android:exported="true">
