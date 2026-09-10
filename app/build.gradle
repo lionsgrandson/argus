@@ -12,8 +12,8 @@ android {
         applicationId 'com.example.babymonitor'
         minSdk 26
         targetSdk 35
-        versionCode 22
-        versionName '3.5.1-block-block-baby'
+        versionCode 23
+        versionName '3.5.2-update-check-settings'
         buildConfigField 'String', 'DEFAULT_RELAY_URL', groovy.json.JsonOutput.toJson(bakedRelay)
     }
 
