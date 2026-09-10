@@ -40,7 +40,10 @@ public final class UpdateActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
-        UpdateManager.resumePending(this);
+        if (UpdateManager.resumePending(this)) {
+            checked = true;
+            return;
+        }
         if (!checked) {
             checked = true;
             UpdateManager.checkAndPrompt(this, true);
