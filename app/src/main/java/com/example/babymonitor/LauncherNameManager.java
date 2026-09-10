@@ -11,19 +11,24 @@ import java.util.Map;
 final class LauncherNameManager {
     private static final String PREFS = "launcher_name_v1";
     private static final String PREF_LABEL = "label";
+    private static final String DEFAULT_LABEL = "Break Watch";
 
     private static final LinkedHashMap<String, String> ALIASES = new LinkedHashMap<>();
+    private static final String[] LEGACY_ALIASES = new String[] {
+            "LauncherBaby",
+            "LauncherBlockBaby",
+            "LauncherBabyBlock",
+            "LauncherBreakBaby",
+            "LauncherBabyBreak",
+            "LauncherTetrisBaby",
+            "LauncherBabyTetris",
+            "LauncherArgusBaby",
+            "LauncherBabyArgus"
+    };
+
     static {
+        ALIASES.put("Break Watch", "LauncherBreakWatch");
         ALIASES.put("ARGUS", "LauncherArgus");
-        ALIASES.put("Baby", "LauncherBaby");
-        ALIASES.put("Block Baby", "LauncherBlockBaby");
-        ALIASES.put("Baby Block", "LauncherBabyBlock");
-        ALIASES.put("Break Baby", "LauncherBreakBaby");
-        ALIASES.put("Baby Break", "LauncherBabyBreak");
-        ALIASES.put("Tetris Baby", "LauncherTetrisBaby");
-        ALIASES.put("Baby Tetris", "LauncherBabyTetris");
-        ALIASES.put("ARGUS Baby", "LauncherArgusBaby");
-        ALIASES.put("Baby ARGUS", "LauncherBabyArgus");
     }
 
     static String[] labels() {
@@ -31,9 +36,19 @@ final class LauncherNameManager {
     }
 
     static String currentLabel(Context context) {
-        if (context == null) return "Block Baby";
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getString(PREF_LABEL, "Block Baby");
+        if (context == null) return DEFAULT_LABEL;
+        String saved = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(PREF_LABEL, DEFAULT_LABEL);
+        return ALIASES.containsKey(saved) ? saved : DEFAULT_LABEL;
+    }
+
+    static void ensureValidName(Context context) {
+        if (context == null) return;
+        String saved = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(PREF_LABEL, "");
+        if (!ALIASES.containsKey(saved)) {
+            setName(context, DEFAULT_LABEL);
+        }
     }
 
     static boolean setName(Context context, String label) {
@@ -58,6 +73,18 @@ final class LauncherNameManager {
                     PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
                     PackageManager.DONT_KILL_APP
             );
+        }
+
+        for (String alias : LEGACY_ALIASES) {
+            try {
+                ComponentName component = new ComponentName(packageName, packageName + "." + alias);
+                pm.setComponentEnabledSetting(
+                        component,
+                        PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                        PackageManager.DONT_KILL_APP
+                );
+            } catch (Exception ignored) {
+            }
         }
 
         SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
