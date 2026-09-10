@@ -43,9 +43,22 @@
         </activity>
 
         <activity-alias
-            android:name=".LauncherBreakWatch"
+            android:name=".LauncherBlockBaby"
             android:targetActivity=".MainActivity"
             android:enabled="true"
+            android:exported="true"
+            android:label="Block Baby"
+            android:icon="@drawable/argus_icon">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".LauncherBreakWatch"
+            android:targetActivity=".MainActivity"
+            android:enabled="false"
             android:exported="true"
             android:label="Break Watch"
             android:icon="@drawable/argus_icon">
