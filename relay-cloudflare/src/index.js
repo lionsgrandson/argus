@@ -1,4 +1,9 @@
 import { DurableObject } from "cloudflare:workers";
+import {
+  clientConfigResponse,
+  updateManifestResponse,
+  updateApkResponse,
+} from "./updates.js";
 
 const PROTOCOL_VERSION = "4";
 const PAIRING_EPOCH = "reset-2026-09-01-v4";
@@ -66,9 +71,22 @@ export default {
           parentStreamControl: true,
           errorCodes: true,
           staleVideoDropping: true,
+          appUpdates: true,
         },
         { headers: { "cache-control": "no-store" } },
       );
+    }
+
+    if (url.pathname === "/client-config") {
+      return clientConfigResponse(request);
+    }
+
+    if (url.pathname === "/app-update") {
+      return updateManifestResponse(request, env);
+    }
+
+    if (url.pathname === "/app-update/apk") {
+      return updateApkResponse(request, env);
     }
 
     if (url.pathname !== "/ws") {
