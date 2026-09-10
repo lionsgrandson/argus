@@ -38,9 +38,7 @@ public final class ArgusApp extends Application {
             @Override public void onActivityResumed(Activity activity) {
                 if (activity instanceof UpdateActivity || activity instanceof SettingsActivity) return;
                 UpdateSettingsOverlay.attach(activity);
-                if (!UpdateManager.resumePending(activity)) {
-                    UpdateManager.checkAndPrompt(activity, false);
-                }
+                UpdateManager.resumePending(activity);
             }
 
             @Override public void onActivityPaused(Activity activity) {}
