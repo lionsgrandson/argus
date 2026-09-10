@@ -1,7 +1,7 @@
 package com.example.babymonitor;
 
 import android.app.Activity;
-import android.app.AlertDialog;
+import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.view.Gravity;
@@ -10,7 +10,6 @@ import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.ImageView;
-import android.widget.Toast;
 
 final class UpdateSettingsOverlay {
     private static final int VIEW_ID = 0x0B10C0DE;
@@ -32,7 +31,7 @@ final class UpdateSettingsOverlay {
         settings.setContentDescription("הגדרות");
         settings.setBackground(new ColorDrawable(Color.TRANSPARENT));
         settings.setPadding(dp(activity, 10), dp(activity, 10), dp(activity, 10), dp(activity, 10));
-        settings.setOnClickListener(v -> showSettings(activity));
+        settings.setOnClickListener(v -> activity.startActivity(new Intent(activity, SettingsActivity.class)));
 
         FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(dp(activity, 48), dp(activity, 48));
         params.gravity = Gravity.TOP | Gravity.RIGHT;
@@ -71,50 +70,6 @@ final class UpdateSettingsOverlay {
             }
         }
         return false;
-    }
-
-    private static void showSettings(Activity activity) {
-        String version = "גרסה " + BuildConfig.VERSION_NAME;
-        String currentName = LauncherNameManager.currentLabel(activity);
-        new AlertDialog.Builder(activity)
-                .setTitle("הגדרות")
-                .setMessage(version + "\nשם אפליקציה: " + currentName)
-                .setItems(new CharSequence[]{"בדיקת עדכונים", "שינוי שם האפליקציה"}, (dialog, which) -> {
-                    if (which == 0) {
-                        UpdateManager.checkAndPrompt(activity, true);
-                    } else if (which == 1) {
-                        showNamePicker(activity);
-                    }
-                })
-                .setNegativeButton("סגירה", null)
-                .show();
-    }
-
-    private static void showNamePicker(Activity activity) {
-        String[] labels = LauncherNameManager.labels();
-        String current = LauncherNameManager.currentLabel(activity);
-        int checked = 0;
-        for (int i = 0; i < labels.length; i++) {
-            if (labels[i].equals(current)) {
-                checked = i;
-                break;
-            }
-        }
-
-        final int[] selected = new int[]{checked};
-        new AlertDialog.Builder(activity)
-                .setTitle("שם האפליקציה")
-                .setSingleChoiceItems(labels, checked, (dialog, which) -> selected[0] = which)
-                .setPositiveButton("שמירה", (dialog, which) -> {
-                    String label = labels[selected[0]];
-                    if (LauncherNameManager.setName(activity, label)) {
-                        Toast.makeText(activity, "שם האפליקציה עודכן ל " + label, Toast.LENGTH_LONG).show();
-                    } else {
-                        Toast.makeText(activity, "לא ניתן היה לעדכן את שם האפליקציה", Toast.LENGTH_LONG).show();
-                    }
-                })
-                .setNegativeButton("ביטול", null)
-                .show();
     }
 
     private static int dp(Activity activity, int value) {
