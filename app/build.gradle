@@ -1,6 +1,8 @@
 plugins { id 'com.android.application' }
 
 def bakedRelay = (project.findProperty("BABY_RELAY_URL") ?: "wss://baby-monitor-secure-relay.mosheschwartzberg.workers.dev/ws").toString()
+def brandIconSource = rootProject.file("branding/block-block-baby-icon.webp.b64")
+def brandIconOutput = file("src/main/res/drawable-nodpi/argus_icon.webp")
 
 android {
     namespace 'com.example.babymonitor'
@@ -10,8 +12,8 @@ android {
         applicationId 'com.example.babymonitor'
         minSdk 26
         targetSdk 35
-        versionCode 21
-        versionName '3.5.0-cloud-updater'
+        versionCode 22
+        versionName '3.5.1-block-block-baby'
         buildConfigField 'String', 'DEFAULT_RELAY_URL', groovy.json.JsonOutput.toJson(bakedRelay)
     }
 
@@ -29,6 +31,24 @@ android {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11
     }
+}
+
+tasks.register("prepareBrandIcon") {
+    inputs.file(brandIconSource)
+    outputs.file(brandIconOutput)
+
+    doLast {
+        if (!brandIconSource.exists()) {
+            throw new GradleException("Missing Block Block Baby icon source: ${brandIconSource}")
+        }
+        brandIconOutput.parentFile.mkdirs()
+        byte[] decoded = java.util.Base64.getDecoder().decode(brandIconSource.getText("UTF-8").replaceAll("\\s", ""))
+        brandIconOutput.bytes = decoded
+    }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn("prepareBrandIcon")
 }
 
 dependencies {
