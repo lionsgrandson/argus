@@ -1,6 +1,7 @@
 .gradle/
 .tools/
 .runtime/
+.signing/
 OUTPUT/
 local.properties
 app/build/
