@@ -20,6 +20,15 @@
     "head_sampling_rate": 1
   },
 
+  // Private update artifacts live under the argus-updates/ prefix in the
+  // existing moshebackup R2 bucket. The Worker streams them to the app.
+  "r2_buckets": [
+    {
+      "binding": "UPDATES",
+      "bucket_name": "moshebackup"
+    }
+  ],
+
   "durable_objects": {
     "bindings": [
       {
