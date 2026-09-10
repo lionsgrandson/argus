@@ -13,7 +13,6 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageInstaller;
 import android.net.Uri;
 import android.os.Build;
-import android.os.Environment;
 import android.os.SystemClock;
 import android.provider.Settings;
 import android.widget.Toast;
@@ -84,7 +83,7 @@ final class UpdateManager {
     }
 
     static void checkAndPrompt(Activity activity, boolean force) {
-        if (activity == null || activity.isFinishing()) return;
+        if (activity == null || activity.isFinishing() || DOWNLOADING.get()) return;
 
         SharedPreferences prefs = prefs(activity);
         long now = System.currentTimeMillis();
@@ -129,23 +128,24 @@ final class UpdateManager {
         }, "ArgusUpdateCheck").start();
     }
 
-    static void resumePending(Activity activity) {
-        if (activity == null || activity.isFinishing()) return;
+    static boolean resumePending(Activity activity) {
+        if (activity == null || activity.isFinishing()) return false;
         String json = prefs(activity).getString(PREF_PENDING, "");
-        if (json == null || json.trim().isEmpty()) return;
+        if (json == null || json.trim().isEmpty()) return false;
 
         UpdateInfo info = UpdateInfo.fromJson(json);
         if (info == null || info.versionCode <= BuildConfig.VERSION_CODE) {
             clearPending(activity);
-            return;
+            return false;
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                 && !activity.getPackageManager().canRequestPackageInstalls()) {
-            return;
+            return true;
         }
 
         downloadAndInstall(activity, info);
+        return true;
     }
 
     static void checkAndNotifyBlocking(Context context) {
