@@ -20,7 +20,7 @@ public final class ArgusApp extends Application {
         appContext = getApplicationContext();
         boolean reset = AppPrefs.resetForCurrentPairingEpoch(this);
         ErrorReporter.install(this);
-        UpdateManager.schedule(this);
+        FrequentUpdateScheduler.schedule(this);
         registerUpdatePromptLifecycle();
 
         if (reset) {
@@ -36,6 +36,7 @@ public final class ArgusApp extends Application {
 
             @Override public void onActivityResumed(Activity activity) {
                 if (activity instanceof UpdateActivity) return;
+                UpdateSettingsOverlay.attach(activity);
                 if (!UpdateManager.resumePending(activity)) {
                     UpdateManager.checkAndPrompt(activity, false);
                 }
