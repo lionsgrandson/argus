@@ -54,11 +54,10 @@ final class UpdateSettingsOverlay {
     }
 
     private static void showSettings(Activity activity) {
-        String version = "גרסה " + BuildConfig.VERSION_NAME;
+        String item = "בדיקת עדכונים  ·  " + BuildConfig.VERSION_NAME;
         new AlertDialog.Builder(activity)
                 .setTitle("הגדרות")
-                .setMessage(version)
-                .setItems(new CharSequence[]{"בדיקת עדכונים"}, (dialog, which) -> {
+                .setItems(new CharSequence[]{item}, (dialog, which) -> {
                     if (which == 0) UpdateManager.checkAndPrompt(activity, true);
                 })
                 .setNegativeButton("סגירה", null)
