@@ -1,8 +1,9 @@
 {
   "schema": 1,
-  "configVersion": 1,
+  "configVersion": 2,
   "refreshSeconds": 300,
   "relayUrls": [
     "wss://baby-monitor-secure-relay.mosheschwartzberg.workers.dev/ws"
-  ]
+  ],
+  "updateManifestUrl": "https://baby-monitor-secure-relay.mosheschwartzberg.workers.dev/app-update"
 }
