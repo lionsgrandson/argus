@@ -41,13 +41,23 @@ final class LauncherNameManager {
 
         PackageManager pm = context.getPackageManager();
         String packageName = context.getPackageName();
+        String selectedAlias = ALIASES.get(label);
+        ComponentName selected = new ComponentName(packageName, packageName + "." + selectedAlias);
+
+        pm.setComponentEnabledSetting(
+                selected,
+                PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                PackageManager.DONT_KILL_APP
+        );
 
         for (Map.Entry<String, String> entry : ALIASES.entrySet()) {
+            if (entry.getKey().equals(label)) continue;
             ComponentName component = new ComponentName(packageName, packageName + "." + entry.getValue());
-            int state = entry.getKey().equals(label)
-                    ? PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-                    : PackageManager.COMPONENT_ENABLED_STATE_DISABLED;
-            pm.setComponentEnabledSetting(component, state, PackageManager.DONT_KILL_APP);
+            pm.setComponentEnabledSetting(
+                    component,
+                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                    PackageManager.DONT_KILL_APP
+            );
         }
 
         SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
