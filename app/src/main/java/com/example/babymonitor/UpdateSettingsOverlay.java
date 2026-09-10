@@ -9,6 +9,8 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
+import android.widget.ImageView;
+import android.widget.Toast;
 
 final class UpdateSettingsOverlay {
     private static final int VIEW_ID = 0x0B10C0DE;
@@ -18,7 +20,11 @@ final class UpdateSettingsOverlay {
 
         View decor = activity.getWindow().getDecorView();
         ViewGroup content = decor.findViewById(android.R.id.content);
-        if (content == null || content.findViewById(VIEW_ID) != null) return;
+        if (content == null) return;
+
+        hideFirstImage(content);
+
+        if (content.findViewById(VIEW_ID) != null) return;
 
         ImageButton settings = new ImageButton(activity);
         settings.setId(VIEW_ID);
@@ -53,14 +59,61 @@ final class UpdateSettingsOverlay {
         }
     }
 
+    private static boolean hideFirstImage(View view) {
+        if (view instanceof ImageView) {
+            view.setVisibility(View.GONE);
+            return true;
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                if (hideFirstImage(group.getChildAt(i))) return true;
+            }
+        }
+        return false;
+    }
+
     private static void showSettings(Activity activity) {
-        String item = "בדיקת עדכונים  ·  " + BuildConfig.VERSION_NAME;
+        String version = "גרסה " + BuildConfig.VERSION_NAME;
+        String currentName = LauncherNameManager.currentLabel(activity);
         new AlertDialog.Builder(activity)
                 .setTitle("הגדרות")
-                .setItems(new CharSequence[]{item}, (dialog, which) -> {
-                    if (which == 0) UpdateManager.checkAndPrompt(activity, true);
+                .setMessage(version + "\nשם אפליקציה: " + currentName)
+                .setItems(new CharSequence[]{"בדיקת עדכונים", "שינוי שם האפליקציה"}, (dialog, which) -> {
+                    if (which == 0) {
+                        UpdateManager.checkAndPrompt(activity, true);
+                    } else if (which == 1) {
+                        showNamePicker(activity);
+                    }
                 })
                 .setNegativeButton("סגירה", null)
+                .show();
+    }
+
+    private static void showNamePicker(Activity activity) {
+        String[] labels = LauncherNameManager.labels();
+        String current = LauncherNameManager.currentLabel(activity);
+        int checked = 0;
+        for (int i = 0; i < labels.length; i++) {
+            if (labels[i].equals(current)) {
+                checked = i;
+                break;
+            }
+        }
+
+        final int[] selected = new int[]{checked};
+        new AlertDialog.Builder(activity)
+                .setTitle("שם האפליקציה")
+                .setSingleChoiceItems(labels, checked, (dialog, which) -> selected[0] = which)
+                .setPositiveButton("שמירה", (dialog, which) -> {
+                    String label = labels[selected[0]];
+                    if (LauncherNameManager.setName(activity, label)) {
+                        Toast.makeText(activity, "שם האפליקציה עודכן ל " + label, Toast.LENGTH_LONG).show();
+                    } else {
+                        Toast.makeText(activity, "לא ניתן היה לעדכן את שם האפליקציה", Toast.LENGTH_LONG).show();
+                    }
+                })
+                .setNegativeButton("ביטול", null)
                 .show();
     }
 
