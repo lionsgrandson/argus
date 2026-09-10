@@ -86,7 +86,7 @@ if (-not (Test-Path $ApkPath)) {
 
 $gradle = Get-Content $BuildFile -Raw
 $versionCodeMatch = [regex]::Match($gradle, 'versionCode\s+(\d+)')
-$versionNameMatch = [regex]::Match($gradle, "versionName\s+['\"]([^'\"]+)['\"]")
+$versionNameMatch = [regex]::Match($gradle, "versionName\s+'([^']+)'")
 if (-not $versionCodeMatch.Success -or -not $versionNameMatch.Success) {
     throw "Could not read versionCode/versionName from app/build.gradle"
 }
