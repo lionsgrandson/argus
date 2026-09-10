@@ -29,11 +29,12 @@ public class SenderService extends Service {
     private final AtomicBoolean micEnabled = new AtomicBoolean(true);
     private final AtomicLong sequence = new AtomicLong(1);
     private final Object packetSendLock = new Object();
+    private final Object recorderLock = new Object();
     private final long sessionId = new SecureRandom().nextLong();
     private volatile long controlSession = Long.MIN_VALUE;
     private volatile long lastControlSequence = 0L;
     private volatile SecureWebSocket ws;
-    private AudioRecord recorder;
+    private volatile AudioRecord recorder;
     private CameraStreamer cameraStreamer;
     private PowerManager.WakeLock wakeLock;
     private WifiManager.WifiLock wifiLock;
@@ -211,40 +212,95 @@ public class SenderService extends Service {
         return "מחובר, השידור מושהה";
     }
 
+    private AudioRecord ensureRecorder(int bufferSize) throws Exception {
+        synchronized (recorderLock) {
+            if (recorder != null && recorder.getState() == AudioRecord.STATE_INITIALIZED) {
+                return recorder;
+            }
+
+            AudioRecord next = new AudioRecord(
+                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                    SAMPLE_RATE,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT,
+                    bufferSize
+            );
+            if (next.getState() != AudioRecord.STATE_INITIALIZED) {
+                next.release();
+                throw new IllegalStateException("AudioRecord init failed");
+            }
+            next.startRecording();
+            recorder = next;
+            return next;
+        }
+    }
+
+    private void releaseRecorder() {
+        synchronized (recorderLock) {
+            AudioRecord old = recorder;
+            recorder = null;
+            if (old == null) return;
+            try { old.stop(); } catch (Exception ignored) { }
+            try { old.release(); } catch (Exception ignored) { }
+        }
+    }
+
     private void audioLoop() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             ErrorReporter.report(this, "baby", "E301", "חסרה הרשאת מיקרופון", null);
             stopSelf();
             return;
         }
-        int min = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
+
+        int min = AudioRecord.getMinBufferSize(
+                SAMPLE_RATE,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT
+        );
         int bufferSize = Math.max(min, SAMPLES_PER_FRAME * 2 * 8);
+        byte[] pcm = new byte[SAMPLES_PER_FRAME * 2];
+        byte[] ulaw = new byte[SAMPLES_PER_FRAME];
+
         try {
-            recorder = new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, SAMPLE_RATE,
-                    AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufferSize);
-            if (recorder.getState() != AudioRecord.STATE_INITIALIZED) {
-                throw new IllegalStateException("AudioRecord init failed");
-            }
-            recorder.startRecording();
-            byte[] pcm = new byte[SAMPLES_PER_FRAME * 2];
-            byte[] ulaw = new byte[SAMPLES_PER_FRAME];
             while (running.get()) {
-                int read = recorder.read(pcm, 0, pcm.length, AudioRecord.READ_BLOCKING);
+                // No active parent stream means no microphone capture at all. Releasing
+                // AudioRecord here also removes Android's microphone privacy indicator.
+                if (!peerOnline.get() || !micEnabled.get()) {
+                    releaseRecorder();
+                    try { Thread.sleep(100); }
+                    catch (InterruptedException ignored) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                    continue;
+                }
+
+                AudioRecord active = ensureRecorder(bufferSize);
+                int read;
+                try {
+                    read = active.read(pcm, 0, pcm.length, AudioRecord.READ_BLOCKING);
+                } catch (Exception e) {
+                    if (!running.get() || !peerOnline.get() || !micEnabled.get()) {
+                        releaseRecorder();
+                        continue;
+                    }
+                    throw e;
+                }
+
                 if (read <= 0) continue;
-                if (!peerOnline.get() || !micEnabled.get()) continue;
+                if (!running.get() || !peerOnline.get() || !micEnabled.get()) continue;
+
                 int encoded = MuLaw.encodePcm16(pcm, read, ulaw);
                 sendEncrypted(PacketCodec.TYPE_AUDIO, ulaw, encoded);
             }
         } catch (Exception e) {
-            ErrorReporter.report(this, "baby", "E302", "המיקרופון לא הצליח להתחיל או להמשיך הקלטה", e);
-            updateNotification("");
-            stopSelf();
-        } finally {
-            if (recorder != null) {
-                try { recorder.stop(); } catch (Exception ignored) { }
-                recorder.release();
-                recorder = null;
+            if (running.get()) {
+                ErrorReporter.report(this, "baby", "E302", "המיקרופון לא הצליח להתחיל או להמשיך הקלטה", e);
+                updateNotification("");
+                stopSelf();
             }
+        } finally {
+            releaseRecorder();
         }
     }
 
@@ -343,7 +399,7 @@ public class SenderService extends Service {
         SecureWebSocket socket = ws;
         ws = null;
         if (socket != null) socket.close();
-        if (recorder != null) try { recorder.stop(); } catch (Exception ignored) { }
+        releaseRecorder();
         if (cameraStreamer != null) {
             cameraStreamer.stop();
             cameraStreamer = null;
