@@ -20,6 +20,7 @@ public final class ArgusApp extends Application {
         appContext = getApplicationContext();
         boolean reset = AppPrefs.resetForCurrentPairingEpoch(this);
         ErrorReporter.install(this);
+        LauncherNameManager.ensureValidName(this);
         FrequentUpdateScheduler.schedule(this);
         registerUpdatePromptLifecycle();
 
