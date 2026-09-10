@@ -3,6 +3,7 @@ package com.example.babymonitor;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.graphics.Color;
+import android.os.Build;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.ViewGroup;
@@ -28,6 +29,17 @@ public final class SettingsActivity extends Activity {
     @Override protected void onResume() {
         super.onResume();
         refreshName();
+
+        if (UpdateManager.resumePending(this)) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                    && !getPackageManager().canRequestPackageInstalls()) {
+                updateStatusView.setText("כדי להשלים את העדכון צריך לאפשר התקנה ממקור זה.");
+            } else {
+                updateStatusView.setText("ממשיך את התקנת העדכון...");
+            }
+            return;
+        }
+
         if (!initialCheckStarted && getIntent() != null
                 && getIntent().getBooleanExtra(EXTRA_CHECK_UPDATES, false)) {
             initialCheckStarted = true;
