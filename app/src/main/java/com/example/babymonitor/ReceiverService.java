@@ -153,9 +153,9 @@ public class ReceiverService extends Service {
                             markPeerOnline();
                         } else if ("PEER:OFFLINE".equals(text)) {
                             markDisconnected(new ErrorReporter.ArgusException(
-                                    "E211",
-                                    "שרת ARGUS זמין, אבל טלפון הילד אינו מחובר",
-                                    "Relay reachable; child peer offline. Possible child internet loss, app stop, reboot, battery restriction or Family Link restriction."));
+                                    "E221",
+                                    "שרת ARGUS זמין, אבל טלפון הילד אינו מחובר. ייתכן שהאינטרנט בטלפון הילד נותק, ARGUS נסגר, הטלפון הופעל מחדש, או ש Family Link / חיסכון בסוללה עצרו את האפליקציה",
+                                    "Relay reachable; child peer offline."));
                             AppPrefs.state(ReceiverService.this, "parent", "טלפון הילד התנתק");
                         }
                     }
@@ -351,7 +351,7 @@ public class ReceiverService extends Service {
         if (!parentInternetAvailable()) {
             if (!connectionErrorReported) {
                 connectionErrorReported = true;
-                ErrorReporter.report(this, "parent", "E210",
+                ErrorReporter.report(this, "parent", "E220",
                         "אין חיבור אינטרנט פעיל בטלפון ההורה",
                         new IOException("Parent device has no validated internet connection"));
             }
@@ -366,9 +366,9 @@ public class ReceiverService extends Service {
                 SecureWebSocket socket = ws;
                 if (error == null && socket != null && socket.isOpen()) {
                     error = new ErrorReporter.ArgusException(
-                            "E211",
-                            "שרת ARGUS זמין, אבל טלפון הילד אינו מחובר",
-                            "Relay socket is open but child peer is offline. Likely child internet/app/background restriction/reboot issue.");
+                            "E221",
+                            "שרת ARGUS זמין, אבל טלפון הילד אינו מחובר. ייתכן שהאינטרנט בטלפון הילד נותק, ARGUS נסגר, הטלפון הופעל מחדש, או ש Family Link / חיסכון בסוללה עצרו את האפליקציה",
+                            "Relay socket is open but child peer is offline.");
                 }
                 if (error == null) error = new IOException("Connection did not recover");
                 ErrorReporter.reportConnection(this, "parent", error);
@@ -379,9 +379,9 @@ public class ReceiverService extends Service {
         if (AppPrefs.parentDataAgeMs(this) > DATA_STALE_MS) {
             if (!connectionErrorReported) {
                 connectionErrorReported = true;
-                ErrorReporter.report(this, "parent", "E212",
-                        "הטלפונים מחוברים לשרת, אבל לא מתקבל מידע חדש מטלפון הילד",
-                        new IOException("Peer is online but child data heartbeat is stale. Possible slow/stalled network or partially stopped child service."));
+                ErrorReporter.report(this, "parent", "E222",
+                        "הטלפונים מחוברים לשרת, אבל לא מתקבל מידע חדש מטלפון הילד. ייתכן שהחיבור איטי או תקוע, או ששירות ARGUS נעצר חלקית בטלפון הילד",
+                        new IOException("Peer is online but child data heartbeat is stale"));
                 AppPrefs.state(this, "parent", "מחובר לשרת, אין מידע חדש");
             }
             return;
@@ -403,35 +403,35 @@ public class ReceiverService extends Service {
         mediaErrorReported = true;
         if (AppPrefs.childHealthFresh(this, CHILD_HEALTH_FRESH_MS)) {
             if (camera && !AppPrefs.childCameraReady(this)) {
-                ErrorReporter.report(this, "parent", "E213",
-                        "החיבור תקין, אבל המצלמה בטלפון הילד אינה זמינה",
-                        new IOException("Child status heartbeat is live but camera is not ready. Check camera permission or camera availability."));
+                ErrorReporter.report(this, "parent", "E223",
+                        "החיבור תקין, אבל המצלמה בטלפון הילד אינה זמינה. בדקו הרשאת מצלמה או אם אפליקציה אחרת משתמשת במצלמה",
+                        new IOException("Child status heartbeat is live but camera is not ready"));
                 return;
             }
             if (mic && !AppPrefs.childMicActive(this)) {
-                ErrorReporter.report(this, "parent", "E214",
-                        "החיבור תקין, אבל המיקרופון בטלפון הילד אינו פעיל",
-                        new IOException("Child status heartbeat is live but microphone is not active. Check stream state or microphone permission."));
+                ErrorReporter.report(this, "parent", "E224",
+                        "החיבור תקין, אבל המיקרופון בטלפון הילד אינו פעיל. בדקו הרשאת מיקרופון ואת הגדרות השידור",
+                        new IOException("Child status heartbeat is live but microphone is not active"));
                 return;
             }
         }
 
         ErrorReporter.report(this, "parent", "E405",
-                "החיבור קיים ומתקבל מידע מצב, אבל השידור עצמו לא מגיע",
-                new IOException("Media stalled while status heartbeat remains alive. Possible low throughput/bitrate, media pipeline stall, or device restriction."));
+                "החיבור קיים ומתקבל מידע מצב, אבל השידור עצמו לא מגיע. ייתכן קצב רשת נמוך, bitrate נמוך, או תקיעה במצלמה או במיקרופון",
+                new IOException("Media stalled while status heartbeat remains alive"));
     }
 
     private void clearRecoveredConnectivityError() {
         connectionErrorReported = false;
         String code = AppPrefs.lastErrorCode(this);
-        if ("E210".equals(code) || "E211".equals(code) || "E212".equals(code)) {
+        if ("E220".equals(code) || "E221".equals(code) || "E222".equals(code)) {
             ErrorReporter.clear(this, "parent");
         }
     }
 
     private void clearRecoveredChildHealthErrors(boolean cameraReady, boolean micActive) {
         String code = AppPrefs.lastErrorCode(this);
-        if (("E213".equals(code) && cameraReady) || ("E214".equals(code) && micActive)) {
+        if (("E223".equals(code) && cameraReady) || ("E224".equals(code) && micActive)) {
             ErrorReporter.clear(this, "parent");
             mediaErrorReported = false;
         }
@@ -459,7 +459,7 @@ public class ReceiverService extends Service {
     private void clearRecoveredMediaError() {
         mediaErrorReported = false;
         String code = AppPrefs.lastErrorCode(this);
-        if ("E405".equals(code) || "E213".equals(code) || "E214".equals(code)) {
+        if ("E405".equals(code) || "E223".equals(code) || "E224".equals(code)) {
             ErrorReporter.clear(this, "parent");
         }
     }
