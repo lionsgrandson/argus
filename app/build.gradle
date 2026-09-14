@@ -12,8 +12,8 @@ android {
         applicationId 'com.example.babymonitor'
         minSdk 26
         targetSdk 35
-        versionCode 28
-        versionName '3.5.7-mic-release-on-stop'
+        versionCode 29
+        versionName '3.5.8-diagnostics'
         buildConfigField 'String', 'DEFAULT_RELAY_URL', groovy.json.JsonOutput.toJson(bakedRelay)
     }
 
@@ -39,7 +39,7 @@ tasks.register("prepareBrandIcon") {
 
     doLast {
         if (!brandIconSource.exists()) {
-            throw new GradleException("Missing Block Block Baby icon source: ${brandIconSource}")
+            throw new GradleException("Missing Block Block Breaker icon source: ${brandIconSource}")
         }
         brandIconOutput.parentFile.mkdirs()
         byte[] decoded = java.util.Base64.getDecoder().decode(brandIconSource.getText("UTF-8").replaceAll("\\s", ""))

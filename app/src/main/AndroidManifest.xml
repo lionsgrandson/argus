@@ -47,7 +47,7 @@
             android:targetActivity=".MainActivity"
             android:enabled="true"
             android:exported="true"
-            android:label="Block Baby"
+            android:label="Block Breaker"
             android:icon="@drawable/argus_icon">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

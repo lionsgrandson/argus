@@ -11,7 +11,7 @@ import java.util.Map;
 final class LauncherNameManager {
     private static final String PREFS = "launcher_name_v1";
     private static final String PREF_LABEL = "label";
-    private static final String DEFAULT_LABEL = "Block Baby";
+    private static final String DEFAULT_LABEL = "Block Breaker";
 
     private static final LinkedHashMap<String, String> ALIASES = new LinkedHashMap<>();
     private static final String[] LEGACY_ALIASES = new String[] {
@@ -26,7 +26,7 @@ final class LauncherNameManager {
     };
 
     static {
-        ALIASES.put("Block Baby", "LauncherBlockBaby");
+        ALIASES.put("Block Breaker", "LauncherBlockBaby");
         ALIASES.put("Break Watch", "LauncherBreakWatch");
         ALIASES.put("ARGUS", "LauncherArgus");
     }
