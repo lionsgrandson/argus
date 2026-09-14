@@ -16,6 +16,7 @@ $ManifestPath = Join-Path $env:TEMP "argus-latest-update.json"
 $SigningDir = Join-Path $Root ".signing"
 $CurrentDebugKey = Join-Path $env:USERPROFILE ".android\debug.keystore"
 $SigningBackup = Join-Path $SigningDir "argus-debug.keystore"
+$UpdateUrl = "https://baby-monitor-secure-relay.mosheschwartzberg.workers.dev/app-update"
 
 function Write-Step([string]$Message) {
     Write-Host ""
@@ -34,10 +35,49 @@ function Invoke-Checked {
     }
 }
 
+function Read-LocalVersion {
+    $gradle = Get-Content $BuildFile -Raw
+    $versionCodeMatch = [regex]::Match($gradle, 'versionCode\s+(\d+)')
+    $versionNameMatch = [regex]::Match($gradle, "versionName\s+'([^']+)'")
+    if (-not $versionCodeMatch.Success -or -not $versionNameMatch.Success) {
+        throw "Could not read versionCode/versionName from app/build.gradle"
+    }
+
+    return [pscustomobject]@{
+        Code = [int]$versionCodeMatch.Groups[1].Value
+        Name = $versionNameMatch.Groups[1].Value
+    }
+}
+
 Set-Location $Root
 Write-Host "============================================================"
 Write-Host "              ARGUS REMOTE UPDATE PUBLISHER"
 Write-Host "============================================================"
+
+$localVersion = Read-LocalVersion
+$VersionCode = $localVersion.Code
+$VersionName = $localVersion.Name
+
+Write-Step "VERSION CHECK"
+Write-Host "[LOCAL] $VersionName ($VersionCode)"
+
+$publishedBefore = $null
+try {
+    $cacheBust = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    $publishedBefore = Invoke-RestMethod -Uri "$UpdateUrl?ts=$cacheBust" -Method Get -TimeoutSec 20
+    $remoteVersionCode = [int]$publishedBefore.versionCode
+    $remoteVersionName = [string]$publishedBefore.versionName
+    Write-Host "[REMOTE] $remoteVersionName ($remoteVersionCode)"
+} catch {
+    Write-Host "[WARN] Could not read the current Cloudflare update manifest before publishing. The final verification will still run." -ForegroundColor Yellow
+}
+
+if ($publishedBefore -ne $null) {
+    $remoteVersionCode = [int]$publishedBefore.versionCode
+    if ($remoteVersionCode -ge $VersionCode) {
+        throw "versionCode $VersionCode has already been published or is older than Cloudflare versionCode $remoteVersionCode. Increase app/build.gradle versionCode before publishing. Android will not offer an update unless the new versionCode is greater than the installed/published version."
+    }
+}
 
 Write-Step "SIGNING"
 if (-not (Test-Path $SigningDir)) {
@@ -84,15 +124,12 @@ if (-not (Test-Path $ApkPath)) {
     throw "Build completed but APK was not found at $ApkPath"
 }
 
-$gradle = Get-Content $BuildFile -Raw
-$versionCodeMatch = [regex]::Match($gradle, 'versionCode\s+(\d+)')
-$versionNameMatch = [regex]::Match($gradle, "versionName\s+'([^']+)'")
-if (-not $versionCodeMatch.Success -or -not $versionNameMatch.Success) {
-    throw "Could not read versionCode/versionName from app/build.gradle"
+# Re-read after the build so a local edit during publishing cannot silently change what is advertised.
+$localVersionAfterBuild = Read-LocalVersion
+if ($localVersionAfterBuild.Code -ne $VersionCode -or $localVersionAfterBuild.Name -ne $VersionName) {
+    throw "app/build.gradle changed during publishing. Start publish-update.cmd again."
 }
 
-$VersionCode = [int]$versionCodeMatch.Groups[1].Value
-$VersionName = $versionNameMatch.Groups[1].Value
 $ApkHash = (Get-FileHash $ApkPath -Algorithm SHA256).Hash.ToLowerInvariant()
 $ApkSize = (Get-Item $ApkPath).Length
 $ObjectKey = "$Prefix/app-v$VersionCode.apk"
@@ -155,15 +192,35 @@ try {
 }
 
 Write-Step "VERIFY"
-$UpdateUrl = "https://baby-monitor-secure-relay.mosheschwartzberg.workers.dev/app-update"
-$published = Invoke-RestMethod -Uri $UpdateUrl -Method Get -TimeoutSec 30
+$verifyBust = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+$published = Invoke-RestMethod -Uri "$UpdateUrl?ts=$verifyBust" -Method Get -TimeoutSec 30
 if ([int]$published.versionCode -ne $VersionCode) {
     throw "Cloudflare verification returned versionCode $($published.versionCode), expected $VersionCode"
+}
+if ([string]$published.versionName -ne $VersionName) {
+    throw "Cloudflare verification returned versionName '$($published.versionName)', expected '$VersionName'"
 }
 if ($published.sha256 -ne $ApkHash) {
     throw "Cloudflare verification returned a different APK hash"
 }
+if ([string]::IsNullOrWhiteSpace([string]$published.apkUrl)) {
+    throw "Cloudflare verification did not return an APK download URL"
+}
 
+$apkVerifyUrl = [string]$published.apkUrl
+$separator = $apkVerifyUrl.Contains("?") ? "&" : "?"
+$apkVerifyUrl = "$apkVerifyUrl${separator}v=$VersionCode&ts=$verifyBust"
+$apkHead = Invoke-WebRequest -Uri $apkVerifyUrl -Method Head -TimeoutSec 30 -UseBasicParsing
+if ([int]$apkHead.StatusCode -ne 200) {
+    throw "Cloudflare APK endpoint returned HTTP $($apkHead.StatusCode)"
+}
+$headerVersion = [string]$apkHead.Headers["x-argus-version-code"]
+if ($headerVersion -ne [string]$VersionCode) {
+    throw "Cloudflare APK endpoint advertises versionCode '$headerVersion', expected '$VersionCode'"
+}
+
+Write-Host "[OK] Cloudflare manifest advertises $VersionName ($VersionCode)."
+Write-Host "[OK] APK download endpoint is live and advertises versionCode $VersionCode."
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Green
 Write-Host "REMOTE UPDATE PUBLISHED" -ForegroundColor Green
