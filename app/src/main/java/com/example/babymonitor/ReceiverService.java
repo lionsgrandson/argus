@@ -199,8 +199,8 @@ public class ReceiverService extends Service {
             SecureWebSocket socket = ws;
             if (!running.get() || !peerOnline.get() || socket == null || !socket.isOpen() || codec == null) return;
             JSONObject j = new JSONObject();
-            j.put("camera", AppPrefs.parentCameraEnabled(this));
-            j.put("mic", AppPrefs.parentMicEnabled(this));
+            j.put("camera", AppPrefs.parentCameraRequested(this));
+            j.put("mic", AppPrefs.parentMicRequested(this));
             byte[] clear = j.toString().getBytes(StandardCharsets.UTF_8);
             long next = controlSequence.getAndIncrement();
             socket.sendBinary(codec.encrypt(PacketCodec.TYPE_STREAM_CONTROL, controlSession, next, clear, clear.length));
@@ -229,7 +229,7 @@ public class ReceiverService extends Service {
             markPeerOnline();
 
             if (d.type == PacketCodec.TYPE_AUDIO) {
-                if (AppPrefs.parentMicEnabled(this)) {
+                if (AppPrefs.parentMicRequested(this)) {
                     byte[] pcm = new byte[d.payload.length * 2];
                     int n = MuLaw.decodeToPcm16(d.payload, pcm);
                     if (n != pcm.length) {
@@ -247,7 +247,7 @@ public class ReceiverService extends Service {
                     publishLiveState();
                 }
             } else if (d.type == PacketCodec.TYPE_VIDEO_JPEG) {
-                if (AppPrefs.parentCameraEnabled(this)) {
+                if (AppPrefs.parentCameraRequested(this)) {
                     LiveVideoStore.put(d.payload);
                     lastVideoAt = System.currentTimeMillis();
                     clearRecoveredMediaError();
@@ -280,7 +280,7 @@ public class ReceiverService extends Service {
             disconnectedAt = 0L;
             lastConnectionError = null;
             connectionErrorReported = false;
-            beginMediaGrace(AppPrefs.parentCameraEnabled(this), AppPrefs.parentMicEnabled(this));
+            beginMediaGrace(AppPrefs.parentCameraRequested(this), AppPrefs.parentMicRequested(this));
             AppPrefs.setPeerOnline(this, "parent", true);
             AppPrefs.setPairConfirmed(this, true);
             AppPrefs.state(this, "parent", "מחובר, ממתין למידע");
@@ -314,7 +314,7 @@ public class ReceiverService extends Service {
                 byte[] pcm = audioQueue.poll(1, TimeUnit.SECONDS);
                 if (pcm == null) continue;
                 AudioTrack current = track;
-                if (current != null && AppPrefs.parentMicEnabled(this)) {
+                if (current != null && AppPrefs.parentMicRequested(this)) {
                     current.write(pcm, 0, pcm.length, AudioTrack.WRITE_BLOCKING);
                 }
             } catch (InterruptedException e) {
@@ -330,8 +330,8 @@ public class ReceiverService extends Service {
         long now = System.currentTimeMillis();
         if (now - lastUiStateAt < 1000) return;
         lastUiStateAt = now;
-        boolean camera = AppPrefs.parentCameraEnabled(this);
-        boolean mic = AppPrefs.parentMicEnabled(this);
+        boolean camera = AppPrefs.parentCameraRequested(this);
+        boolean mic = AppPrefs.parentMicRequested(this);
         boolean videoLive = camera && now - lastVideoAt < 3000;
         boolean audioLive = mic && now - lastAudioAt < 3000;
         String state;
@@ -388,8 +388,8 @@ public class ReceiverService extends Service {
         }
 
         connectionErrorReported = false;
-        boolean camera = AppPrefs.parentCameraEnabled(this);
-        boolean mic = AppPrefs.parentMicEnabled(this);
+        boolean camera = AppPrefs.parentCameraRequested(this);
+        boolean mic = AppPrefs.parentMicRequested(this);
         if (!camera && !mic) return;
         if (now - mediaChangedAt < MEDIA_GRACE_MS) return;
 
