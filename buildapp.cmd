@@ -29,8 +29,9 @@ rem    Local/test builds are still allowed even if the version is old.
 rem    publish-update.cmd performs the strict blocking check.
 rem ------------------------------------------------------------
 if exist "%BUILD_FILE%" (
-    for /f "delims=" %%V in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$g=Get-Content -Raw $env:BUILD_FILE; $m=[regex]::Match($g,'versionCode\s+(\d+)'); if($m.Success){$m.Groups[1].Value}"') do set "LOCAL_VERSION_CODE=%%V"
-    for /f "delims=" %%V in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$g=Get-Content -Raw $env:BUILD_FILE; $m=[regex]::Match($g,\"versionName\s+'([^']+)'\"); if($m.Success){$m.Groups[1].Value}"') do set "LOCAL_VERSION_NAME=%%V"
+    for /f "tokens=2" %%V in ('findstr /c:"versionCode " "%BUILD_FILE%"') do set "LOCAL_VERSION_CODE=%%V"
+    for /f "tokens=2" %%V in ('findstr /c:"versionName " "%BUILD_FILE%"') do set "LOCAL_VERSION_NAME=%%V"
+    if defined LOCAL_VERSION_NAME set "LOCAL_VERSION_NAME=!LOCAL_VERSION_NAME:'=!"
 )
 
 if not defined LOCAL_VERSION_CODE (
@@ -284,7 +285,7 @@ echo Versioned APK for manual installs/testing:
 echo   %VERSIONED_APK_OUTPUT%
 echo.
 if defined REMOTE_VERSION_CODE (
-    if %LOCAL_VERSION_CODE% LEQ %REMOTE_VERSION_CODE% (
+    if %LOCAL_VERSION_CODE% LEQ !REMOTE_VERSION_CODE! (
         echo [WARNING] Do NOT publish this as a remote update without increasing versionCode.
     ) else (
         echo [OK] This version is newer than the Cloudflare version seen at build start.
