@@ -7,6 +7,7 @@ final class AppPrefs {
     private static final String PREFS = "baby_monitor";
     private static final int PAIRING_EPOCH = 4;
     private static final long ERROR_VISIBLE_MS = 5 * 60 * 1000L;
+    private static final long PARENT_DATA_FRESH_MS = 7000L;
     static final String DEFAULT_RELAY = BuildConfig.DEFAULT_RELAY_URL;
 
     static SharedPreferences prefs(Context c) {
@@ -52,6 +53,13 @@ final class AppPrefs {
                 .putBoolean("pair_confirmed", false)
                 .putBoolean("baby_peer_online", false)
                 .putBoolean("parent_peer_online", false)
+                .remove("parent_last_data_at")
+                .remove("baby_battery")
+                .remove("baby_charging")
+                .remove("baby_battery_at")
+                .remove("child_camera_ready")
+                .remove("child_mic_active")
+                .remove("child_health_at")
                 .remove("last_error_code")
                 .remove("last_error_message")
                 .remove("last_error_detail")
@@ -70,11 +78,34 @@ final class AppPrefs {
     }
 
     static void setPeerOnline(Context c, String role, boolean online) {
-        prefs(c).edit().putBoolean(role + "_peer_online", online).apply();
+        SharedPreferences.Editor edit = prefs(c).edit().putBoolean(role + "_peer_online", online);
+        if ("parent".equals(role) && !online) {
+            edit.remove("parent_last_data_at")
+                    .remove("baby_battery")
+                    .remove("baby_charging")
+                    .remove("baby_battery_at");
+        }
+        edit.apply();
     }
 
     static boolean peerOnline(Context c, String role) {
-        return prefs(c).getBoolean(role + "_peer_online", false);
+        boolean online = prefs(c).getBoolean(role + "_peer_online", false);
+        if (!online) return false;
+        if ("parent".equals(role)) return parentDataFresh(c, PARENT_DATA_FRESH_MS);
+        return true;
+    }
+
+    static void parentDataReceived(Context c) {
+        prefs(c).edit().putLong("parent_last_data_at", System.currentTimeMillis()).apply();
+    }
+
+    static long parentDataAgeMs(Context c) {
+        long at = prefs(c).getLong("parent_last_data_at", 0L);
+        return at <= 0L ? Long.MAX_VALUE : Math.max(0L, System.currentTimeMillis() - at);
+    }
+
+    static boolean parentDataFresh(Context c, long maxAgeMs) {
+        return parentDataAgeMs(c) <= maxAgeMs;
     }
 
     static void setParentMedia(Context c, boolean camera, boolean mic) {
@@ -191,6 +222,27 @@ final class AppPrefs {
                 .putBoolean("baby_charging", charging)
                 .putLong("baby_battery_at", System.currentTimeMillis())
                 .apply();
+    }
+
+    static void childHealth(Context c, boolean cameraReady, boolean micActive) {
+        prefs(c).edit()
+                .putBoolean("child_camera_ready", cameraReady)
+                .putBoolean("child_mic_active", micActive)
+                .putLong("child_health_at", System.currentTimeMillis())
+                .apply();
+    }
+
+    static boolean childCameraReady(Context c) {
+        return prefs(c).getBoolean("child_camera_ready", true);
+    }
+
+    static boolean childMicActive(Context c) {
+        return prefs(c).getBoolean("child_mic_active", true);
+    }
+
+    static boolean childHealthFresh(Context c, long maxAgeMs) {
+        long at = prefs(c).getLong("child_health_at", 0L);
+        return at > 0L && System.currentTimeMillis() - at <= maxAgeMs;
     }
 
     private AppPrefs() {}
