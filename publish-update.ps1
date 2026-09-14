@@ -208,7 +208,11 @@ if ([string]::IsNullOrWhiteSpace([string]$published.apkUrl)) {
 }
 
 $apkVerifyUrl = [string]$published.apkUrl
-$separator = $apkVerifyUrl.Contains("?") ? "&" : "?"
+if ($apkVerifyUrl.Contains("?")) {
+    $separator = "&"
+} else {
+    $separator = "?"
+}
 $apkVerifyUrl = "$apkVerifyUrl${separator}v=$VersionCode&ts=$verifyBust"
 $apkHead = Invoke-WebRequest -Uri $apkVerifyUrl -Method Head -TimeoutSec 30 -UseBasicParsing
 if ([int]$apkHead.StatusCode -ne 200) {
