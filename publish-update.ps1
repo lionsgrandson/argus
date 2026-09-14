@@ -64,7 +64,7 @@ Write-Host "[LOCAL] $VersionName ($VersionCode)"
 $publishedBefore = $null
 try {
     $cacheBust = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-    $publishedBefore = Invoke-RestMethod -Uri "$UpdateUrl?ts=$cacheBust" -Method Get -TimeoutSec 20
+    $publishedBefore = Invoke-RestMethod -Uri "${UpdateUrl}?ts=$cacheBust" -Method Get -TimeoutSec 20
     $remoteVersionCode = [int]$publishedBefore.versionCode
     $remoteVersionName = [string]$publishedBefore.versionName
     Write-Host "[REMOTE] $remoteVersionName ($remoteVersionCode)"
@@ -193,7 +193,7 @@ try {
 
 Write-Step "VERIFY"
 $verifyBust = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-$published = Invoke-RestMethod -Uri "$UpdateUrl?ts=$verifyBust" -Method Get -TimeoutSec 30
+$published = Invoke-RestMethod -Uri "${UpdateUrl}?ts=$verifyBust" -Method Get -TimeoutSec 30
 if ([int]$published.versionCode -ne $VersionCode) {
     throw "Cloudflare verification returned versionCode $($published.versionCode), expected $VersionCode"
 }
