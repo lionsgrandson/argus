@@ -28,6 +28,11 @@ ARGUS version 3.3.1 stores the last diagnostic error locally with its code, role
 | E210 | Relay rate limit was hit |
 | E211 | Relay could not forward a frame to the peer |
 | E212 | Cloudflare relay WebSocket error |
+| E220 | Parent phone has no validated internet connection |
+| E221 | Relay is reachable, but the child phone is not connected; likely child internet loss, app stop, reboot, battery restriction, or Family Link/background restriction |
+| E222 | Both phones are attached to the relay, but no fresh child heartbeat/data is arriving; likely stalled/slow networking or a partially stopped child service |
+| E223 | Child heartbeat is arriving, but the child camera is not ready; check camera permission/availability |
+| E224 | Child heartbeat is arriving, but the child microphone is not active; check microphone permission/stream state |
 
 ## Audio and camera
 
@@ -52,7 +57,7 @@ ARGUS version 3.3.1 stores the last diagnostic error locally with its code, role
 | E402 | Stream control command failed |
 | E403 | Child status/battery message failed |
 | E404 | Background WiFi lock could not be acquired |
-| E405 | Phones are connected but expected media stopped arriving |
+| E405 | Phones are connected and status is still arriving, but expected media stopped arriving; possible low throughput/bitrate or media pipeline stall |
 
 ## Unexpected
 
