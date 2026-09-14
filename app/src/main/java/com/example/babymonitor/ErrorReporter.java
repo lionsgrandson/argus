@@ -94,13 +94,15 @@ public final class ErrorReporter {
     public static void report(Context context, String role, String code, String userMessage, Throwable error) {
         if (context == null) return;
         String safeRole = role == null || role.isEmpty() ? "setup" : role;
+        String source = diagnosticSource(safeRole, code);
+        String displayMessage = source.isEmpty() ? userMessage : source + ": " + userMessage;
         String rawDetail = technicalDetail(error);
-        AppPrefs.saveError(context, safeRole, code, userMessage, rawDetail);
+        AppPrefs.saveError(context, safeRole, code, displayMessage, rawDetail);
         int count = AppPrefs.lastErrorCount(context);
         if ("parent".equals(safeRole)) {
-            AppPrefs.state(context, safeRole, "שגיאה " + code + ": " + userMessage);
+            AppPrefs.state(context, safeRole, "שגיאה " + code + ": " + displayMessage);
         }
-        Log.e(TAG, code + " [" + safeRole + "] " + userMessage + (rawDetail.isEmpty() ? "" : " | " + rawDetail), error);
+        Log.e(TAG, code + " [" + safeRole + "] " + displayMessage + (rawDetail.isEmpty() ? "" : " | " + rawDetail), error);
 
         // The Child phone stays silent and unobtrusive. Errors remain in the
         // diagnostic log/preferences, but never create a toast or notification.
@@ -110,9 +112,9 @@ public final class ErrorReporter {
 
         if (count == 1) {
             new Handler(Looper.getMainLooper()).post(() ->
-                    Toast.makeText(context.getApplicationContext(), "ARGUS " + code + ": " + userMessage, Toast.LENGTH_LONG).show());
+                    Toast.makeText(context.getApplicationContext(), "ARGUS " + code + ": " + displayMessage, Toast.LENGTH_LONG).show());
         }
-        showNotification(context, safeRole, code, userMessage, hebrewTechnicalSummary(error));
+        showNotification(context, safeRole, code, displayMessage, hebrewTechnicalSummary(error));
     }
 
     public static void report(String role, String code, String userMessage, Throwable error) {
@@ -132,6 +134,33 @@ public final class ErrorReporter {
         if (context != null) clear(context, role);
     }
 
+    static String diagnosticSource(String role, String code) {
+        if (code == null) code = "";
+        if ("parent".equals(role)) {
+            if ("E220".equals(code) || "E304".equals(code) || "E404".equals(code) || "E500".equals(code)) {
+                return "בעיה בטלפון ההורה";
+            }
+            if ("E221".equals(code) || "E223".equals(code) || "E224".equals(code)
+                    || "E301".equals(code) || "E302".equals(code) || "E303".equals(code)
+                    || "E305".equals(code) || "E306".equals(code) || "E307".equals(code)
+                    || "E308".equals(code) || "E309".equals(code) || "E310".equals(code)) {
+                return "בעיה בטלפון הילד";
+            }
+            if ("E222".equals(code) || "E405".equals(code)) {
+                return "בעיה בשידור בין הטלפונים";
+            }
+            if (code.startsWith("E2")) {
+                return "בעיה בחיבור או בשרת";
+            }
+            if (code.startsWith("E4")) {
+                return "בעיה בנתונים או בשידור";
+            }
+            return "בעיה באפליקציית ההורה";
+        }
+        if ("setup".equals(role)) return "בעיה בהגדרת ARGUS";
+        return "";
+    }
+
     private static void showNotification(Context context, String role, String code, String message, String detail) {
         ensureChannel(context);
         NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
@@ -141,6 +170,8 @@ public final class ErrorReporter {
         PendingIntent pi = PendingIntent.getActivity(context, notificationId(role), open,
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
 
+        String source = diagnosticSource(role, code);
+        String title = source.isEmpty() ? "שגיאת ARGUS " + code : source + " • " + code;
         String big = "קוד שגיאה: " + code + "\n" + message;
         if (!detail.isEmpty()) big += "\nפרטים: " + detail;
         int count = AppPrefs.lastErrorCount(context);
@@ -148,7 +179,7 @@ public final class ErrorReporter {
 
         Notification notification = new Notification.Builder(context, CHANNEL)
                 .setSmallIcon(android.R.drawable.stat_notify_error)
-                .setContentTitle("שגיאת ARGUS " + code)
+                .setContentTitle(title)
                 .setContentText(message)
                 .setStyle(new Notification.BigTextStyle().bigText(big))
                 .setCategory(Notification.CATEGORY_ERROR)
