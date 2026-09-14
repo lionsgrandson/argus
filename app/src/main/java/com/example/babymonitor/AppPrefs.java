@@ -110,17 +110,33 @@ final class AppPrefs {
 
     static void setParentMedia(Context c, boolean camera, boolean mic) {
         prefs(c).edit()
+                .putBoolean("parent_camera_requested", camera)
+                .putBoolean("parent_mic_requested", mic)
                 .putBoolean("parent_camera_enabled", camera)
                 .putBoolean("parent_mic_enabled", mic)
                 .apply();
     }
 
+    static boolean parentCameraRequested(Context c) {
+        SharedPreferences p = prefs(c);
+        return p.contains("parent_camera_requested")
+                ? p.getBoolean("parent_camera_requested", false)
+                : p.getBoolean("parent_camera_enabled", false);
+    }
+
+    static boolean parentMicRequested(Context c) {
+        SharedPreferences p = prefs(c);
+        return p.contains("parent_mic_requested")
+                ? p.getBoolean("parent_mic_requested", true)
+                : p.getBoolean("parent_mic_enabled", true);
+    }
+
     static boolean parentCameraEnabled(Context c) {
-        return prefs(c).getBoolean("parent_camera_enabled", false);
+        return parentCameraRequested(c) && peerOnline(c, "parent");
     }
 
     static boolean parentMicEnabled(Context c) {
-        return prefs(c).getBoolean("parent_mic_enabled", true);
+        return parentMicRequested(c) && peerOnline(c, "parent");
     }
 
     static void setChildMedia(Context c, boolean camera, boolean mic) {
