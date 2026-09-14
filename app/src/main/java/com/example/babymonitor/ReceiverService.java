@@ -4,6 +4,7 @@ import android.app.*;
 import android.content.*;
 import android.content.pm.ServiceInfo;
 import android.media.*;
+import android.net.*;
 import android.net.wifi.WifiManager;
 import android.os.*;
 import org.json.JSONObject;
@@ -20,6 +21,8 @@ public class ReceiverService extends Service {
     private static final int SAMPLE_RATE = 8000;
     private static final long MEDIA_GRACE_MS = 12000L;
     private static final long DISCONNECT_GRACE_MS = 10000L;
+    private static final long DATA_STALE_MS = 8000L;
+    private static final long CHILD_HEALTH_FRESH_MS = 8000L;
     static final String ACTION_SET_STREAM = "com.example.babymonitor.SET_STREAM";
     static final String EXTRA_CAMERA = "camera";
     static final String EXTRA_MIC = "mic";
@@ -149,7 +152,10 @@ public class ReceiverService extends Service {
                         if ("PEER:ONLINE".equals(text)) {
                             markPeerOnline();
                         } else if ("PEER:OFFLINE".equals(text)) {
-                            markDisconnected(new IOException("Child phone is offline"));
+                            markDisconnected(new ErrorReporter.ArgusException(
+                                    "E211",
+                                    "שרת ARGUS זמין, אבל טלפון הילד אינו מחובר",
+                                    "Relay reachable; child peer offline. Possible child internet loss, app stop, reboot, battery restriction or Family Link restriction."));
                             AppPrefs.state(ReceiverService.this, "parent", "טלפון הילד התנתק");
                         }
                     }
@@ -218,6 +224,8 @@ public class ReceiverService extends Service {
             }
             if (d.sequence <= lastSequence) return;
             lastSequence = d.sequence;
+            AppPrefs.parentDataReceived(this);
+            clearRecoveredConnectivityError();
             markPeerOnline();
 
             if (d.type == PacketCodec.TYPE_AUDIO) {
@@ -250,7 +258,11 @@ public class ReceiverService extends Service {
                 JSONObject j = new JSONObject(new String(d.payload, StandardCharsets.UTF_8));
                 int pct = j.optInt("battery", -1);
                 boolean charging = j.optBoolean("charging", false);
+                boolean cameraReady = j.optBoolean("camera", true);
+                boolean micActive = j.optBoolean("mic", true);
                 AppPrefs.parentBattery(this, pct, charging);
+                AppPrefs.childHealth(this, cameraReady, micActive);
+                clearRecoveredChildHealthErrors(cameraReady, micActive);
                 if (pct >= 0 && pct < 20 && !charging && !lowBatteryNotified) {
                     lowBatteryNotified = true;
                     notifyLowBattery(pct);
@@ -271,8 +283,7 @@ public class ReceiverService extends Service {
             beginMediaGrace(AppPrefs.parentCameraEnabled(this), AppPrefs.parentMicEnabled(this));
             AppPrefs.setPeerOnline(this, "parent", true);
             AppPrefs.setPairConfirmed(this, true);
-            ErrorReporter.clear(this, "parent");
-            AppPrefs.state(this, "parent", "מחובר");
+            AppPrefs.state(this, "parent", "מחובר, ממתין למידע");
             updateNotification("מחובר");
             sendStreamControl();
         }
@@ -281,6 +292,7 @@ public class ReceiverService extends Service {
     private void markDisconnected(Throwable error) {
         peerOnline.set(false);
         audioQueue.clear();
+        LiveVideoStore.clear();
         AppPrefs.setPeerOnline(this, "parent", false);
         if (disconnectedAt == 0L) disconnectedAt = System.currentTimeMillis();
         if (error != null) lastConnectionError = error;
@@ -335,34 +347,119 @@ public class ReceiverService extends Service {
     private void watchConnection() {
         if (!running.get()) return;
         long now = System.currentTimeMillis();
+
+        if (!parentInternetAvailable()) {
+            if (!connectionErrorReported) {
+                connectionErrorReported = true;
+                ErrorReporter.report(this, "parent", "E210",
+                        "אין חיבור אינטרנט פעיל בטלפון ההורה",
+                        new IOException("Parent device has no validated internet connection"));
+            }
+            return;
+        }
+
         if (!peerOnline.get()) {
             if (disconnectedAt > 0L && now - disconnectedAt >= DISCONNECT_GRACE_MS
                     && !connectionErrorReported) {
                 connectionErrorReported = true;
                 Throwable error = lastConnectionError;
+                SecureWebSocket socket = ws;
+                if (error == null && socket != null && socket.isOpen()) {
+                    error = new ErrorReporter.ArgusException(
+                            "E211",
+                            "שרת ARGUS זמין, אבל טלפון הילד אינו מחובר",
+                            "Relay socket is open but child peer is offline. Likely child internet/app/background restriction/reboot issue.");
+                }
                 if (error == null) error = new IOException("Connection did not recover");
                 ErrorReporter.reportConnection(this, "parent", error);
             }
             return;
         }
+
+        if (AppPrefs.parentDataAgeMs(this) > DATA_STALE_MS) {
+            if (!connectionErrorReported) {
+                connectionErrorReported = true;
+                ErrorReporter.report(this, "parent", "E212",
+                        "הטלפונים מחוברים לשרת, אבל לא מתקבל מידע חדש מטלפון הילד",
+                        new IOException("Peer is online but child data heartbeat is stale. Possible slow/stalled network or partially stopped child service."));
+                AppPrefs.state(this, "parent", "מחובר לשרת, אין מידע חדש");
+            }
+            return;
+        }
+
+        connectionErrorReported = false;
         boolean camera = AppPrefs.parentCameraEnabled(this);
         boolean mic = AppPrefs.parentMicEnabled(this);
         if (!camera && !mic) return;
         if (now - mediaChangedAt < MEDIA_GRACE_MS) return;
+
         boolean staleAudio = mic && now - lastAudioAt > MEDIA_GRACE_MS;
         boolean staleVideo = camera && now - lastVideoAt > MEDIA_GRACE_MS;
-        if ((mic && !camera && staleAudio)
+        boolean expectedMediaMissing = (mic && !camera && staleAudio)
                 || (camera && !mic && staleVideo)
-                || (camera && mic && staleAudio && staleVideo)) {
-            if (mediaErrorReported) return;
-            mediaErrorReported = true;
-            ErrorReporter.report(this, "parent", "E405", "החיבור קיים אבל לא מתקבל שידור מטלפון הילד", null);
+                || (camera && mic && staleAudio && staleVideo);
+        if (!expectedMediaMissing || mediaErrorReported) return;
+
+        mediaErrorReported = true;
+        if (AppPrefs.childHealthFresh(this, CHILD_HEALTH_FRESH_MS)) {
+            if (camera && !AppPrefs.childCameraReady(this)) {
+                ErrorReporter.report(this, "parent", "E213",
+                        "החיבור תקין, אבל המצלמה בטלפון הילד אינה זמינה",
+                        new IOException("Child status heartbeat is live but camera is not ready. Check camera permission or camera availability."));
+                return;
+            }
+            if (mic && !AppPrefs.childMicActive(this)) {
+                ErrorReporter.report(this, "parent", "E214",
+                        "החיבור תקין, אבל המיקרופון בטלפון הילד אינו פעיל",
+                        new IOException("Child status heartbeat is live but microphone is not active. Check stream state or microphone permission."));
+                return;
+            }
+        }
+
+        ErrorReporter.report(this, "parent", "E405",
+                "החיבור קיים ומתקבל מידע מצב, אבל השידור עצמו לא מגיע",
+                new IOException("Media stalled while status heartbeat remains alive. Possible low throughput/bitrate, media pipeline stall, or device restriction."));
+    }
+
+    private void clearRecoveredConnectivityError() {
+        connectionErrorReported = false;
+        String code = AppPrefs.lastErrorCode(this);
+        if ("E210".equals(code) || "E211".equals(code) || "E212".equals(code)) {
+            ErrorReporter.clear(this, "parent");
+        }
+    }
+
+    private void clearRecoveredChildHealthErrors(boolean cameraReady, boolean micActive) {
+        String code = AppPrefs.lastErrorCode(this);
+        if (("E213".equals(code) && cameraReady) || ("E214".equals(code) && micActive)) {
+            ErrorReporter.clear(this, "parent");
+            mediaErrorReported = false;
+        }
+    }
+
+    private boolean parentInternetAvailable() {
+        try {
+            ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+            if (cm == null) return false;
+            if (Build.VERSION.SDK_INT >= 23) {
+                Network network = cm.getActiveNetwork();
+                if (network == null) return false;
+                NetworkCapabilities caps = cm.getNetworkCapabilities(network);
+                return caps != null
+                        && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                        && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+            }
+            NetworkInfo info = cm.getActiveNetworkInfo();
+            return info != null && info.isConnected();
+        } catch (Exception ignored) {
+            return true;
         }
     }
 
     private void clearRecoveredMediaError() {
         mediaErrorReported = false;
-        if ("E405".equals(AppPrefs.lastErrorCode(this))) {
+        String code = AppPrefs.lastErrorCode(this);
+        if ("E405".equals(code) || "E213".equals(code) || "E214".equals(code)) {
             ErrorReporter.clear(this, "parent");
         }
     }
