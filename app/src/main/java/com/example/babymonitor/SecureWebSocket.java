@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.net.ssl.*;
 
 final class SecureWebSocket {
@@ -17,6 +18,9 @@ final class SecureWebSocket {
         void onError(Exception error);
     }
 
+    private static final long HEARTBEAT_INTERVAL_MS = 10000L;
+    private static final long HEARTBEAT_TIMEOUT_MS = 25000L;
+
     private final String baseUrl;
     private final PairingConfig pairing;
     private final String authToken;
@@ -27,8 +31,10 @@ final class SecureWebSocket {
     private volatile InputStream in;
     private volatile OutputStream out;
     private volatile boolean open;
+    private volatile long lastInboundAt = System.currentTimeMillis();
     private final Object writeLock = new Object();
     private final SecureRandom random = new SecureRandom();
+    private final AtomicBoolean terminalNotified = new AtomicBoolean(false);
 
     SecureWebSocket(String baseUrl, PairingConfig pairing, String role, Listener listener) throws Exception {
         if (baseUrl == null || baseUrl.trim().isEmpty()) {
@@ -146,6 +152,8 @@ final class SecureWebSocket {
             throw new ErrorReporter.ArgusException("E203", "אימות חיבור האבטחה נכשל", "Invalid WebSocket accept header");
         }
 
+        terminalNotified.set(false);
+        lastInboundAt = System.currentTimeMillis();
         open = true;
         listener.onOpen();
         Thread reader = new Thread(this::readLoop, "ArgusWS");
@@ -182,6 +190,12 @@ final class SecureWebSocket {
         out = null;
     }
 
+    private void notifyTerminal(Exception error, String reason) {
+        if (!terminalNotified.compareAndSet(false, true)) return;
+        if (error != null) listener.onError(error);
+        listener.onClosed(reason == null || reason.trim().isEmpty() ? "connection closed" : reason);
+    }
+
     private static SSLSocket connectTlsWithFallback(String host, int port) throws Exception {
         InetAddress[] addresses = ResilientDns.resolve(host);
         if (addresses == null || addresses.length == 0) throw new UnknownHostException(host);
@@ -215,13 +229,19 @@ final class SecureWebSocket {
     private void heartbeatLoop() {
         while (open) {
             try {
-                Thread.sleep(10000);
-                if (open) sendFrame(0x9, "hb".getBytes(StandardCharsets.US_ASCII));
+                Thread.sleep(HEARTBEAT_INTERVAL_MS);
+                if (!open) return;
+                long silentForMs = System.currentTimeMillis() - lastInboundAt;
+                if (silentForMs > HEARTBEAT_TIMEOUT_MS) {
+                    throw new SocketTimeoutException("WebSocket heartbeat timed out after " + silentForMs + " ms");
+                }
+                sendFrame(0x9, "hb".getBytes(StandardCharsets.US_ASCII));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return;
             } catch (Exception e) {
                 closeSilently();
+                notifyTerminal(e, "heartbeat failed: " + (e.getMessage() == null ? "connection lost" : e.getMessage()));
                 return;
             }
         }
@@ -230,6 +250,7 @@ final class SecureWebSocket {
     private void readLoop() {
         String reason = "connection closed";
         boolean unexpectedClose = false;
+        Exception terminalError = null;
         try {
             while (open) {
                 int b0 = in.read();
@@ -253,6 +274,7 @@ final class SecureWebSocket {
                 }
                 byte[] mask = masked ? readExactly(in, 4) : null;
                 byte[] payload = readExactly(in, (int) len);
+                lastInboundAt = System.currentTimeMillis();
                 if (masked) {
                     for (int i = 0; i < payload.length; i++) payload[i] ^= mask[i & 3];
                 }
@@ -269,14 +291,14 @@ final class SecureWebSocket {
         } catch (Exception e) {
             if (open) {
                 unexpectedClose = true;
-                listener.onError(e);
+                terminalError = e;
             }
             reason = e.getMessage() == null ? "connection error" : e.getMessage();
         } finally {
             open = false;
             closeSilently();
             if (!unexpectedClose) ErrorReporter.clear(role);
-            listener.onClosed(reason);
+            notifyTerminal(terminalError, reason);
         }
     }
 
