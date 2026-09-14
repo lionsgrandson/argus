@@ -74,8 +74,12 @@ try {
 
 if ($publishedBefore -ne $null) {
     $remoteVersionCode = [int]$publishedBefore.versionCode
-    if ($remoteVersionCode -ge $VersionCode) {
-        throw "versionCode $VersionCode has already been published or is older than Cloudflare versionCode $remoteVersionCode. Increase app/build.gradle versionCode before publishing. Android will not offer an update unless the new versionCode is greater than the installed/published version."
+    if ($remoteVersionCode -gt $VersionCode) {
+        throw "Cloudflare already advertises newer versionCode $remoteVersionCode. Increase app/build.gradle versionCode before publishing."
+    }
+    if ($remoteVersionCode -eq $VersionCode) {
+        Write-Host "[INFO] Cloudflare already advertises this versionCode. The APK will be rebuilt and compared by SHA-256."
+        Write-Host "[INFO] If it is the exact same APK, publishing will resume at verification instead of failing."
     }
 }
 
@@ -124,7 +128,6 @@ if (-not (Test-Path $ApkPath)) {
     throw "Build completed but APK was not found at $ApkPath"
 }
 
-# Re-read after the build so a local edit during publishing cannot silently change what is advertised.
 $localVersionAfterBuild = Read-LocalVersion
 if ($localVersionAfterBuild.Code -ne $VersionCode -or $localVersionAfterBuild.Name -ne $VersionName) {
     throw "app/build.gradle changed during publishing. Start publish-update.cmd again."
@@ -133,6 +136,19 @@ if ($localVersionAfterBuild.Code -ne $VersionCode -or $localVersionAfterBuild.Na
 $ApkHash = (Get-FileHash $ApkPath -Algorithm SHA256).Hash.ToLowerInvariant()
 $ApkSize = (Get-Item $ApkPath).Length
 $ObjectKey = "$Prefix/app-v$VersionCode.apk"
+$AlreadyPublishedIdentically = $false
+
+if ($publishedBefore -ne $null -and [int]$publishedBefore.versionCode -eq $VersionCode) {
+    $remoteHash = ([string]$publishedBefore.sha256).ToLowerInvariant()
+    $remoteName = [string]$publishedBefore.versionName
+    if ($remoteHash -eq $ApkHash -and $remoteName -eq $VersionName) {
+        $AlreadyPublishedIdentically = $true
+        Write-Host "[OK] Cloudflare already has this exact APK and version."
+        Write-Host "[OK] Skipping duplicate upload and continuing to verification."
+    } else {
+        throw "versionCode $VersionCode is already published with a different APK or version name. Increase app/build.gradle versionCode before publishing another build."
+    }
+}
 
 $manifest = [ordered]@{
     enabled = $true
@@ -157,38 +173,42 @@ Write-Host "[OK] SHA-256: $ApkHash"
 Write-Host "[OK] Size: $ApkSize bytes"
 
 Write-Step "CLOUDFLARE"
-if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-    throw "Node.js is not installed or is not in PATH."
-}
-if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
-    throw "npm is not installed or is not in PATH."
-}
-
-Push-Location $RelayDir
-try {
-    if (-not (Test-Path "node_modules\.bin\wrangler.cmd")) {
-        Write-Host "[SETUP] Installing Cloudflare deploy tools..."
-        Invoke-Checked "npm.cmd" "install"
+if ($AlreadyPublishedIdentically) {
+    Write-Host "[SKIP] Identical version and APK are already present on Cloudflare."
+} else {
+    if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+        throw "Node.js is not installed or is not in PATH."
+    }
+    if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
+        throw "npm is not installed or is not in PATH."
     }
 
-    & "npx.cmd" "wrangler" "whoami" *> $null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "[FIRST TIME ONLY] Cloudflare sign-in is required."
-        Invoke-Checked "npx.cmd" "wrangler" "login"
-    } else {
-        Write-Host "[OK] Saved Cloudflare login found."
+    Push-Location $RelayDir
+    try {
+        if (-not (Test-Path "node_modules\.bin\wrangler.cmd")) {
+            Write-Host "[SETUP] Installing Cloudflare deploy tools..."
+            Invoke-Checked "npm.cmd" "install"
+        }
+
+        & "npx.cmd" "wrangler" "whoami" *> $null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "[FIRST TIME ONLY] Cloudflare sign-in is required."
+            Invoke-Checked "npx.cmd" "wrangler" "login"
+        } else {
+            Write-Host "[OK] Saved Cloudflare login found."
+        }
+
+        Write-Host "[DEPLOY] Ensuring the update endpoints and R2 binding are live..."
+        Invoke-Checked "npx.cmd" "wrangler" "deploy"
+
+        Write-Host "[UPLOAD] Uploading signed APK to R2..."
+        Invoke-Checked "npx.cmd" "wrangler" "r2" "object" "put" "$Bucket/$ObjectKey" "--file" $ApkPath "--content-type" "application/vnd.android.package-archive" "--cache-control" "no-store" "--remote"
+
+        Write-Host "[UPLOAD] Publishing latest update manifest..."
+        Invoke-Checked "npx.cmd" "wrangler" "r2" "object" "put" "$Bucket/$Prefix/latest.json" "--file" $ManifestPath "--content-type" "application/json" "--cache-control" "no-store" "--remote"
+    } finally {
+        Pop-Location
     }
-
-    Write-Host "[DEPLOY] Ensuring the update endpoints and R2 binding are live..."
-    Invoke-Checked "npx.cmd" "wrangler" "deploy"
-
-    Write-Host "[UPLOAD] Uploading signed APK to R2..."
-    Invoke-Checked "npx.cmd" "wrangler" "r2" "object" "put" "$Bucket/$ObjectKey" "--file" $ApkPath "--content-type" "application/vnd.android.package-archive" "--cache-control" "no-store" "--remote"
-
-    Write-Host "[UPLOAD] Publishing latest update manifest..."
-    Invoke-Checked "npx.cmd" "wrangler" "r2" "object" "put" "$Bucket/$Prefix/latest.json" "--file" $ManifestPath "--content-type" "application/json" "--cache-control" "no-store" "--remote"
-} finally {
-    Pop-Location
 }
 
 Write-Step "VERIFY"
@@ -227,7 +247,7 @@ Write-Host "[OK] Cloudflare manifest advertises $VersionName ($VersionCode)."
 Write-Host "[OK] APK download endpoint is live and advertises versionCode $VersionCode."
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Green
-Write-Host "REMOTE UPDATE PUBLISHED" -ForegroundColor Green
+Write-Host "REMOTE UPDATE PUBLISHED"
 Write-Host "============================================================" -ForegroundColor Green
 Write-Host "Version $VersionName ($VersionCode) is now available to installed apps."
 Write-Host "Users will receive the in-app update prompt/notification automatically."
