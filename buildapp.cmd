@@ -10,10 +10,65 @@ set "GRADLE_ZIP=%TOOLS_DIR%\gradle-%GRADLE_VERSION%-bin.zip"
 set "OUTPUT_DIR=%CD%\OUTPUT"
 set "APK_SOURCE=%CD%\app\build\outputs\apk\debug\app-debug.apk"
 set "APK_OUTPUT=%OUTPUT_DIR%\ARGUS-debug.apk"
+set "BUILD_FILE=%CD%\app\build.gradle"
+set "UPDATE_URL=https://baby-monitor-secure-relay.mosheschwartzberg.workers.dev/app-update"
+set "LOCAL_VERSION_CODE="
+set "LOCAL_VERSION_NAME="
+set "REMOTE_VERSION_CODE="
+set "REMOTE_VERSION_NAME="
+set "VERSIONED_APK_OUTPUT="
 
 echo ============================================================
 echo                     ARGUS LOCAL BUILD
 echo ============================================================
+echo.
+
+rem ------------------------------------------------------------
+rem 0. Read the Android version and compare it with Cloudflare.
+rem    Local/test builds are still allowed even if the version is old.
+rem    publish-update.cmd performs the strict blocking check.
+rem ------------------------------------------------------------
+if exist "%BUILD_FILE%" (
+    for /f "delims=" %%V in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$g=Get-Content -Raw $env:BUILD_FILE; $m=[regex]::Match($g,'versionCode\s+(\d+)'); if($m.Success){$m.Groups[1].Value}"') do set "LOCAL_VERSION_CODE=%%V"
+    for /f "delims=" %%V in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$g=Get-Content -Raw $env:BUILD_FILE; $m=[regex]::Match($g,\"versionName\s+'([^']+)'\"); if($m.Success){$m.Groups[1].Value}"') do set "LOCAL_VERSION_NAME=%%V"
+)
+
+if not defined LOCAL_VERSION_CODE (
+    echo [ERROR] Could not read versionCode from app\build.gradle.
+    pause
+    exit /b 1
+)
+if not defined LOCAL_VERSION_NAME (
+    echo [ERROR] Could not read versionName from app\build.gradle.
+    pause
+    exit /b 1
+)
+
+set "VERSIONED_APK_OUTPUT=%OUTPUT_DIR%\ARGUS-v%LOCAL_VERSION_CODE%.apk"
+echo [VERSION] Local: %LOCAL_VERSION_NAME% ^(%LOCAL_VERSION_CODE%^)
+
+if /I "%ARGUS_PUBLISHING%"=="1" (
+    echo [VERSION] Publishing mode: strict Cloudflare version validation is handled by publish-update.ps1.
+) else (
+    for /f "tokens=1,* delims=|" %%A in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue'; try { $u=$env:UPDATE_URL + '?ts=' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds(); $r=Invoke-RestMethod -Uri $u -Method Get -TimeoutSec 8; Write-Output ([string]$r.versionCode + '|' + [string]$r.versionName) } catch { }"') do (
+        set "REMOTE_VERSION_CODE=%%A"
+        set "REMOTE_VERSION_NAME=%%B"
+    )
+
+    if defined REMOTE_VERSION_CODE (
+        echo [VERSION] Cloudflare: !REMOTE_VERSION_NAME! ^(!REMOTE_VERSION_CODE!^)
+        if %LOCAL_VERSION_CODE% LEQ !REMOTE_VERSION_CODE! (
+            echo [WARNING] This APK is NOT a newer remote-update version.
+            echo [WARNING] Local versionCode %LOCAL_VERSION_CODE% must be greater than Cloudflare versionCode !REMOTE_VERSION_CODE! before publishing.
+            echo [WARNING] The APK will still be built for local testing/installing.
+        ) else (
+            echo [OK] versionCode %LOCAL_VERSION_CODE% is newer than Cloudflare versionCode !REMOTE_VERSION_CODE!.
+        )
+    ) else (
+        echo [WARN] Could not read the live Cloudflare version. Continuing with the local build.
+    )
+)
+
 echo.
 
 rem ------------------------------------------------------------
@@ -175,6 +230,7 @@ rem 5. Build ARGUS locally.
 rem ------------------------------------------------------------
 echo.
 echo [BUILD] Building ARGUS debug APK locally...
+echo [BUILD] Version: %LOCAL_VERSION_NAME% ^(%LOCAL_VERSION_CODE%^)
 echo.
 
 call "%GRADLE_DIR%\bin\gradle.bat" :app:assembleDebug --no-daemon
@@ -200,9 +256,15 @@ if not exist "%APK_SOURCE%" (
 
 if not exist "%OUTPUT_DIR%" mkdir "%OUTPUT_DIR%" >nul 2>nul
 copy /y "%APK_SOURCE%" "%APK_OUTPUT%" >nul
-
 if errorlevel 1 (
     echo [ERROR] APK built, but could not copy it to OUTPUT.
+    pause
+    exit /b 1
+)
+
+copy /y "%APK_SOURCE%" "%VERSIONED_APK_OUTPUT%" >nul
+if errorlevel 1 (
+    echo [ERROR] APK built, but could not create the versioned OUTPUT copy.
     pause
     exit /b 1
 )
@@ -212,15 +274,27 @@ echo ============================================================
 echo BUILD SUCCESSFUL
 echo ============================================================
 echo.
-echo APK:
-echo %APK_OUTPUT%
+echo Version:
+echo   %LOCAL_VERSION_NAME% ^(%LOCAL_VERSION_CODE%^)
 echo.
-echo You can copy ARGUS-debug.apk directly to the phones and install it.
+echo APK used by publish-update.cmd:
+echo   %APK_OUTPUT%
+echo.
+echo Versioned APK for manual installs/testing:
+echo   %VERSIONED_APK_OUTPUT%
+echo.
+if defined REMOTE_VERSION_CODE (
+    if %LOCAL_VERSION_CODE% LEQ %REMOTE_VERSION_CODE% (
+        echo [WARNING] Do NOT publish this as a remote update without increasing versionCode.
+    ) else (
+        echo [OK] This version is newer than the Cloudflare version seen at build start.
+    )
+)
 echo No GitHub Actions minutes were used.
 echo.
 
 if /I "%ARGUS_PUBLISHING%"=="1" exit /b 0
 
-explorer /select,"%APK_OUTPUT%" >nul 2>nul
+explorer /select,"%VERSIONED_APK_OUTPUT%" >nul 2>nul
 pause
 exit /b 0
