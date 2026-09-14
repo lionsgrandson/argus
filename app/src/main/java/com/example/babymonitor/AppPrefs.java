@@ -80,19 +80,30 @@ final class AppPrefs {
     static void setPeerOnline(Context c, String role, boolean online) {
         SharedPreferences.Editor edit = prefs(c).edit().putBoolean(role + "_peer_online", online);
         if ("parent".equals(role) && !online) {
-            edit.remove("parent_last_data_at")
-                    .remove("baby_battery")
-                    .remove("baby_charging")
-                    .remove("baby_battery_at");
+            clearParentSnapshot(edit, true);
         }
         edit.apply();
     }
 
     static boolean peerOnline(Context c, String role) {
-        boolean online = prefs(c).getBoolean(role + "_peer_online", false);
+        SharedPreferences p = prefs(c);
+        boolean online = p.getBoolean(role + "_peer_online", false);
         if (!online) return false;
-        if ("parent".equals(role)) return parentDataFresh(c, PARENT_DATA_FRESH_MS);
-        return true;
+        if (!"parent".equals(role)) return true;
+        if (parentDataFresh(c, PARENT_DATA_FRESH_MS)) return true;
+        if (p.contains("baby_battery") || p.contains("baby_charging") || p.contains("baby_battery_at")) {
+            SharedPreferences.Editor edit = p.edit();
+            clearParentSnapshot(edit, false);
+            edit.apply();
+        }
+        return false;
+    }
+
+    private static void clearParentSnapshot(SharedPreferences.Editor edit, boolean clearHeartbeat) {
+        if (clearHeartbeat) edit.remove("parent_last_data_at");
+        edit.remove("baby_battery")
+                .remove("baby_charging")
+                .remove("baby_battery_at");
     }
 
     static void parentDataReceived(Context c) {
