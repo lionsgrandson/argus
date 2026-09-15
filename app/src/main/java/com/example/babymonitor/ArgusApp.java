@@ -22,6 +22,7 @@ public final class ArgusApp extends Application {
         ErrorReporter.install(this);
         LauncherNameManager.ensureValidName(this);
         FrequentUpdateScheduler.schedule(this);
+        WakeManager.initialize(this);
         registerUpdatePromptLifecycle();
 
         if (reset) {
@@ -39,6 +40,7 @@ public final class ArgusApp extends Application {
                 if (activity instanceof UpdateActivity || activity instanceof SettingsActivity) return;
                 UpdateSettingsOverlay.attach(activity);
                 UpdateManager.resumePending(activity);
+                WakeManager.refreshRegistrationAsync(activity);
             }
 
             @Override public void onActivityPaused(Activity activity) {}
