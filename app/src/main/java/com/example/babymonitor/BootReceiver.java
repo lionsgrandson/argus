@@ -1,9 +1,5 @@
 package com.example.babymonitor;
 
-import android.app.Notification;
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
-import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -13,9 +9,6 @@ import android.os.UserManager;
 public class BootReceiver extends BroadcastReceiver {
     static final String ACTION_RESUME_BABY = "com.example.babymonitor.RESUME_CHILD";
     static final String ACTION_RESUME_PARENT = "com.example.babymonitor.RESUME_PARENT";
-
-    private static final String CHANNEL_ID = "argus_resume_v2";
-    private static final int NOTIFICATION_ID = 1077;
 
     @Override public void onReceive(Context context, Intent intent) {
         if (intent == null) return;
@@ -39,6 +32,7 @@ public class BootReceiver extends BroadcastReceiver {
         new Thread(() -> {
             try {
                 resumeAfterRestart(appContext, mode);
+                WakeManager.refreshRegistrationAsync(appContext);
             } finally {
                 pendingResult.finish();
             }
@@ -46,27 +40,36 @@ public class BootReceiver extends BroadcastReceiver {
     }
 
     private void resumeAfterRestart(Context context, String mode) {
-        String resumeAction = "baby".equals(mode) ? ACTION_RESUME_BABY : ACTION_RESUME_PARENT;
-        if (RootSupport.tryLaunchResumeActivity(context, resumeAction)) {
-            cancelResumeNotification(context);
+        if ("baby".equals(mode)) {
+            // Android 14+ treats microphone/camera permissions as while-in-use and
+            // does not allow a BOOT_COMPLETED receiver to create this foreground
+            // service. Do not try to bypass that restriction or force an Activity
+            // onto the screen. FCM can still refresh the device's wake registration.
+            if (Build.VERSION.SDK_INT >= 34) {
+                AppPrefs.setPeerOnline(context, "baby", false);
+                AppPrefs.state(context, "baby", "ממתין להפעלה לאחר אתחול");
+                return;
+            }
+
+            if (!tryStart(context, SenderService.class)) {
+                AppPrefs.setPeerOnline(context, "baby", false);
+                AppPrefs.state(context, "baby", "ממתין להפעלה לאחר אתחול");
+            }
             return;
         }
 
-        if ("baby".equals(mode) && Build.VERSION.SDK_INT < 30) {
-            if (tryStart(context, SenderService.class)) {
-                cancelResumeNotification(context);
-                return;
-            }
+        // Starting a mediaPlayback foreground service from BOOT_COMPLETED is
+        // restricted for apps targeting Android 15+ on Android 15+.
+        if (Build.VERSION.SDK_INT >= 35) {
+            AppPrefs.setPeerOnline(context, "parent", false);
+            AppPrefs.state(context, "parent", "ממתין להפעלה לאחר אתחול");
+            return;
         }
 
-        if ("parent".equals(mode) && Build.VERSION.SDK_INT < 35) {
-            if (tryStart(context, ReceiverService.class)) {
-                cancelResumeNotification(context);
-                return;
-            }
+        if (!tryStart(context, ReceiverService.class)) {
+            AppPrefs.setPeerOnline(context, "parent", false);
+            AppPrefs.state(context, "parent", "ממתין להפעלה לאחר אתחול");
         }
-
-        postResumeNotification(context, mode);
     }
 
     private boolean tryStart(Context context, Class<?> serviceClass) {
@@ -78,46 +81,5 @@ public class BootReceiver extends BroadcastReceiver {
         } catch (RuntimeException e) {
             return false;
         }
-    }
-
-    private void postResumeNotification(Context context, String mode) {
-        NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-        if (Build.VERSION.SDK_INT >= 26) {
-            NotificationChannel channel = new NotificationChannel(
-                    CHANNEL_ID,
-                    "הפעלה מחדש של ARGUS",
-                    NotificationManager.IMPORTANCE_HIGH
-            );
-            channel.setDescription("חידוש הפעילות של ARGUS לאחר הפעלה מחדש של הטלפון");
-            nm.createNotificationChannel(channel);
-        }
-
-        Intent open = new Intent(context, MainActivity.class)
-                .setAction("baby".equals(mode) ? ACTION_RESUME_BABY : ACTION_RESUME_PARENT)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        PendingIntent pi = PendingIntent.getActivity(
-                context,
-                77,
-                open,
-                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT
-        );
-
-        String label = "baby".equals(mode) ? "שידור טלפון הילד" : "האזנת טלפון ההורה";
-        Notification.Builder builder = Build.VERSION.SDK_INT >= 26
-                ? new Notification.Builder(context, CHANNEL_ID)
-                : new Notification.Builder(context);
-        Notification notification = builder
-                .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
-                .setContentTitle("חידוש ARGUS")
-                .setContentText("הטלפון הופעל מחדש. לחצו כדי לחדש את " + label)
-                .setContentIntent(pi)
-                .setAutoCancel(true)
-                .build();
-        nm.notify(NOTIFICATION_ID, notification);
-    }
-
-    private void cancelResumeNotification(Context context) {
-        NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-        nm.cancel(NOTIFICATION_ID);
     }
 }
