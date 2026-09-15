@@ -1,6 +1,10 @@
 plugins { id 'com.android.application' }
 
 def bakedRelay = (project.findProperty("BABY_RELAY_URL") ?: "wss://baby-monitor-secure-relay.mosheschwartzberg.workers.dev/ws").toString()
+def firebaseApiKey = (project.findProperty("ARGUS_FIREBASE_API_KEY") ?: System.getenv("ARGUS_FIREBASE_API_KEY") ?: "").toString()
+def firebaseAppId = (project.findProperty("ARGUS_FIREBASE_APP_ID") ?: System.getenv("ARGUS_FIREBASE_APP_ID") ?: "").toString()
+def firebaseProjectId = (project.findProperty("ARGUS_FIREBASE_PROJECT_ID") ?: System.getenv("ARGUS_FIREBASE_PROJECT_ID") ?: "").toString()
+def firebaseSenderId = (project.findProperty("ARGUS_FIREBASE_SENDER_ID") ?: System.getenv("ARGUS_FIREBASE_SENDER_ID") ?: "").toString()
 def brandIconSource = rootProject.file("branding/block-block-baby-icon.webp.b64")
 def brandIconOutput = file("src/main/res/drawable-nodpi/argus_icon.webp")
 
@@ -12,9 +16,13 @@ android {
         applicationId 'com.example.babymonitor'
         minSdk 26
         targetSdk 35
-        versionCode 30
-        versionName '3.5.9-update-pipeline-fix'
+        versionCode 31
+        versionName '3.6.0-boot-fcm-recovery'
         buildConfigField 'String', 'DEFAULT_RELAY_URL', groovy.json.JsonOutput.toJson(bakedRelay)
+        buildConfigField 'String', 'FIREBASE_API_KEY', groovy.json.JsonOutput.toJson(firebaseApiKey)
+        buildConfigField 'String', 'FIREBASE_APP_ID', groovy.json.JsonOutput.toJson(firebaseAppId)
+        buildConfigField 'String', 'FIREBASE_PROJECT_ID', groovy.json.JsonOutput.toJson(firebaseProjectId)
+        buildConfigField 'String', 'FIREBASE_SENDER_ID', groovy.json.JsonOutput.toJson(firebaseSenderId)
     }
 
     buildFeatures {
@@ -54,4 +62,6 @@ tasks.named("preBuild").configure {
 dependencies {
     implementation 'com.google.zxing:core:3.5.3'
     implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
+    implementation platform('com.google.firebase:firebase-bom:34.19.0')
+    implementation 'com.google.firebase:firebase-messaging'
 }
