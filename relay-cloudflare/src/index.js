@@ -10,9 +10,16 @@ const PAIRING_EPOCH = "reset-2026-09-01-v4";
 const MAX_FRAME_BYTES = 768 * 1024;
 const MAX_BYTES_PER_10S = 32 * 1024 * 1024;
 const MAX_VIDEO_BUFFER_BYTES = 192 * 1024;
+const MAX_WAKE_BODY_BYTES = 16 * 1024;
+
+let fcmTokenCache = { token: "", expiresAt: 0 };
 
 function validToken(value, min, max) {
   return typeof value === "string" && value.length >= min && value.length <= max && /^[A-Za-z0-9_-]+$/.test(value);
+}
+
+function validFcmToken(value) {
+  return typeof value === "string" && value.length >= 20 && value.length <= 4096 && !/[\r\n]/.test(value);
 }
 
 async function sha256Hex(value) {
@@ -53,6 +60,140 @@ function errorResponse(code, status, message) {
   });
 }
 
+function jsonResponse(value, status = 200) {
+  return Response.json(value, {
+    status,
+    headers: { "cache-control": "no-store" },
+  });
+}
+
+async function readSmallJson(request) {
+  const length = Number(request.headers.get("content-length") || "0");
+  if (length > MAX_WAKE_BODY_BYTES) throw new Error("wake body too large");
+  const text = await request.text();
+  if (text.length > MAX_WAKE_BODY_BYTES) throw new Error("wake body too large");
+  return text ? JSON.parse(text) : {};
+}
+
+function base64UrlBytes(bytes) {
+  let binary = "";
+  const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  for (const value of view) binary += String.fromCharCode(value);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function base64UrlText(value) {
+  return base64UrlBytes(new TextEncoder().encode(value));
+}
+
+function pemToArrayBuffer(pem) {
+  const clean = pem
+    .replace(/-----BEGIN PRIVATE KEY-----/g, "")
+    .replace(/-----END PRIVATE KEY-----/g, "")
+    .replace(/\s+/g, "");
+  const binary = atob(clean);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+}
+
+async function googleAccessToken(env) {
+  const now = Math.floor(Date.now() / 1000);
+  if (fcmTokenCache.token && fcmTokenCache.expiresAt > now + 60) return fcmTokenCache.token;
+
+  if (!env.FCM_SERVICE_ACCOUNT_JSON) throw new Error("FCM service account is not configured");
+  const serviceAccount = JSON.parse(env.FCM_SERVICE_ACCOUNT_JSON);
+  if (!serviceAccount.client_email || !serviceAccount.private_key) throw new Error("Invalid FCM service account");
+
+  const header = base64UrlText(JSON.stringify({ alg: "RS256", typ: "JWT" }));
+  const claims = base64UrlText(JSON.stringify({
+    iss: serviceAccount.client_email,
+    scope: "https://www.googleapis.com/auth/firebase.messaging",
+    aud: "https://oauth2.googleapis.com/token",
+    iat: now,
+    exp: now + 3600,
+  }));
+  const unsigned = `${header}.${claims}`;
+
+  const key = await crypto.subtle.importKey(
+    "pkcs8",
+    pemToArrayBuffer(serviceAccount.private_key),
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    key,
+    new TextEncoder().encode(unsigned),
+  );
+  const assertion = `${unsigned}.${base64UrlBytes(signature)}`;
+
+  const body = new URLSearchParams();
+  body.set("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer");
+  body.set("assertion", assertion);
+
+  const response = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body,
+  });
+  if (!response.ok) throw new Error(`OAuth token request failed: ${response.status}`);
+  const json = await response.json();
+  if (!json.access_token) throw new Error("OAuth token missing");
+
+  fcmTokenCache = {
+    token: json.access_token,
+    expiresAt: now + Math.max(60, Number(json.expires_in || 3600)),
+  };
+  return fcmTokenCache.token;
+}
+
+async function sendFcmWake(env, registrationToken, hint) {
+  if (!validFcmToken(registrationToken)) return false;
+  if (!env.FCM_SERVICE_ACCOUNT_JSON) {
+    logEvent("fcm_not_configured", { room: hint });
+    return false;
+  }
+
+  try {
+    const serviceAccount = JSON.parse(env.FCM_SERVICE_ACCOUNT_JSON);
+    const projectId = env.FCM_PROJECT_ID || serviceAccount.project_id;
+    if (!projectId) throw new Error("FCM project id missing");
+    const accessToken = await googleAccessToken(env);
+
+    const response = await fetch(`https://fcm.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/messages:send`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        "content-type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify({
+        message: {
+          token: registrationToken,
+          data: { action: "ARGUS_RECONNECT" },
+          android: {
+            priority: "high",
+            ttl: "30s",
+          },
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const detail = (await response.text()).slice(0, 500);
+      logEvent("fcm_wake_failed", { room: hint, status: response.status, detail });
+      return false;
+    }
+
+    logEvent("fcm_wake_sent", { room: hint });
+    return true;
+  } catch (error) {
+    logEvent("fcm_wake_failed", { room: hint, message: error?.message || "FCM error" });
+    return false;
+  }
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -72,6 +213,7 @@ export default {
           errorCodes: true,
           staleVideoDropping: true,
           appUpdates: true,
+          fcmWake: Boolean(env.FCM_SERVICE_ACCOUNT_JSON),
         },
         { headers: { "cache-control": "no-store" } },
       );
@@ -87,6 +229,23 @@ export default {
 
     if (url.pathname === "/app-update/apk") {
       return updateApkResponse(request, env);
+    }
+
+    if (url.pathname === "/wake/register" || url.pathname === "/wake/request") {
+      if (request.method !== "POST") return errorResponse("E204", 405, "POST required");
+      let body;
+      try {
+        body = await readSmallJson(request.clone());
+      } catch {
+        return errorResponse("E205", 400, "Invalid wake request");
+      }
+      const roomId = typeof body.room === "string" ? body.room : "";
+      const auth = authFrom(request);
+      if (!validToken(roomId, 12, 32) || !validToken(auth, 16, 64)) {
+        return errorResponse("E205", 401, "Invalid wake authorization");
+      }
+      const stub = env.ROOMS.getByName(`${PAIRING_EPOCH}:${roomId}`);
+      return stub.fetch(request);
     }
 
     if (url.pathname !== "/ws") {
@@ -140,6 +299,50 @@ export class RoomV4 extends DurableObject {
 
   async fetch(request) {
     const url = new URL(request.url);
+
+    if (url.pathname === "/wake/register" || url.pathname === "/wake/request") {
+      let body;
+      try {
+        body = await readSmallJson(request);
+      } catch {
+        return errorResponse("E205", 400, "Invalid wake request");
+      }
+      const roomId = typeof body.room === "string" ? body.room : "";
+      const auth = authFrom(request);
+      const hint = roomHint(roomId);
+      if (!validToken(roomId, 12, 32) || !validToken(auth, 16, 64)) {
+        return errorResponse("E205", 401, "Unauthorized");
+      }
+
+      const suppliedHash = await sha256Hex(auth);
+      const storedHash = await this.ctx.storage.get("authHash");
+      if (storedHash && storedHash !== suppliedHash) {
+        return errorResponse("E205", 409, "Pairing mismatch");
+      }
+      if (!storedHash) {
+        await this.ctx.storage.put("authHash", suppliedHash);
+        await this.ctx.storage.put("pairedAt", Date.now());
+        await this.ctx.storage.put("pairingEpoch", PAIRING_EPOCH);
+      }
+
+      if (url.pathname === "/wake/register") {
+        const token = typeof body.token === "string" ? body.token.trim() : "";
+        if (!validFcmToken(token)) return errorResponse("E205", 400, "Invalid FCM token");
+        await this.ctx.storage.put("babyFcmToken", token);
+        await this.ctx.storage.put("babyFcmRegisteredAt", Date.now());
+        logEvent("fcm_registered", { room: hint });
+        return jsonResponse({ ok: true });
+      }
+
+      const token = await this.ctx.storage.get("babyFcmToken");
+      if (!validFcmToken(token)) {
+        logEvent("fcm_wake_skipped", { room: hint, reason: "no_registered_token" });
+        return jsonResponse({ ok: true, sent: false, reason: "no_registered_token" }, 202);
+      }
+      const sent = await sendFcmWake(this.env, token, hint);
+      return jsonResponse({ ok: true, sent }, sent ? 200 : 202);
+    }
+
     const roomId = url.searchParams.get("room") || "";
     const role = url.searchParams.get("role") || "";
     const version = url.searchParams.get("v") || "";
@@ -208,9 +411,21 @@ export class RoomV4 extends DurableObject {
     } else {
       try { server.send("PEER:OFFLINE"); } catch {}
       logEvent("phone_connected_waiting_for_peer", { role, room: hint });
+      if (role === "parent") {
+        this.ctx.waitUntil(this.wakeRegisteredChild(hint));
+      }
     }
 
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  async wakeRegisteredChild(hint) {
+    const token = await this.ctx.storage.get("babyFcmToken");
+    if (!validFcmToken(token)) {
+      logEvent("fcm_wake_skipped", { room: hint, reason: "no_registered_token" });
+      return;
+    }
+    await sendFcmWake(this.env, token, hint);
   }
 
   async webSocketMessage(ws, message) {
