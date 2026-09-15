@@ -20,16 +20,33 @@ import java.nio.charset.StandardCharsets;
 
 final class WakeManager {
     private static final String PREF_FCM_TOKEN = "argus_fcm_token_v1";
+    private static final String PREF_SETUP_ROLE = "setup_role";
     private static final int HTTP_TIMEOUT_MS = 8000;
 
     static void initialize(Context context) {
         if (!ensureFirebase(context)) return;
+        Context app = context.getApplicationContext();
         try {
             FirebaseMessaging.getInstance().getToken().addOnCompleteListener(task -> {
                 if (!task.isSuccessful() || task.getResult() == null) return;
-                onNewToken(context, task.getResult());
+                onNewToken(app, task.getResult());
             });
         } catch (RuntimeException ignored) { }
+
+        // Setup can finish after the initial FCM token arrives. Retry registration
+        // a few times so a freshly configured child phone normally registers its
+        // token without requiring another app launch or reboot.
+        new Thread(() -> {
+            long[] delays = { 5000L, 20000L, 60000L };
+            for (long delay : delays) {
+                try { Thread.sleep(delay); }
+                catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                refreshRegistrationAsync(app);
+            }
+        }, "ArgusWakeRegistrationRetry").start();
     }
 
     static void onNewToken(Context context, String token) {
@@ -42,7 +59,7 @@ final class WakeManager {
     static void refreshRegistrationAsync(Context context) {
         if (context == null) return;
         Context app = context.getApplicationContext();
-        if (!ensureFirebase(app)) return;
+        if (!ensureFirebase(app) || !isChildPhone(app)) return;
 
         String stored = AppPrefs.prefs(app).getString(PREF_FCM_TOKEN, "");
         if (stored != null && !stored.trim().isEmpty()) {
@@ -79,7 +96,7 @@ final class WakeManager {
     static void handleRemoteWake(Context context) {
         if (context == null) return;
         Context app = context.getApplicationContext();
-        if (!"baby".equals(AppPrefs.mode(app))) return;
+        if (!isChildPhone(app)) return;
 
         // Android 14+ does not let a background app create a microphone/camera
         // foreground service just because FCM woke it. Keep this path silent and
@@ -89,6 +106,7 @@ final class WakeManager {
             AppPrefs.setPeerOnline(app, "baby", false);
             AppPrefs.state(app, "baby", "התקבלה בקשת חיבור מרחוק");
             RemoteConfig.refreshIfDue(app);
+            refreshRegistrationAsync(app);
             return;
         }
 
@@ -101,9 +119,15 @@ final class WakeManager {
         }
     }
 
+    private static boolean isChildPhone(Context context) {
+        if ("baby".equals(AppPrefs.mode(context))) return true;
+        String role = AppPrefs.prefs(context).getString(PREF_SETUP_ROLE, "");
+        return "baby".equals(role);
+    }
+
     private static void registerAsync(Context context, String token) {
         PairingConfig pairing = AppPrefs.pairing(context);
-        if (pairing == null || !"baby".equals(AppPrefs.mode(context))) return;
+        if (pairing == null || !isChildPhone(context)) return;
 
         new Thread(() -> {
             try {
