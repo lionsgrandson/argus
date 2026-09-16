@@ -49,6 +49,47 @@ function Read-LocalVersion {
     }
 }
 
+function Set-LocalVersionCode([int]$NewCode) {
+    $gradle = Get-Content $BuildFile -Raw
+    if (-not [regex]::IsMatch($gradle, 'versionCode\s+\d+')) {
+        throw "Could not find versionCode in app/build.gradle"
+    }
+
+    $updated = [regex]::Replace($gradle, 'versionCode\s+\d+', "versionCode $NewCode", 1)
+    [System.IO.File]::WriteAllText(
+        $BuildFile,
+        $updated,
+        (New-Object System.Text.UTF8Encoding($false))
+    )
+}
+
+function Build-ArgusApk([int]$ExpectedCode, [string]$ExpectedName, [string]$StepName = "BUILD") {
+    Write-Step $StepName
+    $env:ARGUS_PUBLISHING = "1"
+    try {
+        & (Join-Path $Root "buildapp.cmd")
+        if ($LASTEXITCODE -ne 0) {
+            throw "Android build failed with exit code $LASTEXITCODE"
+        }
+    } finally {
+        Remove-Item Env:ARGUS_PUBLISHING -ErrorAction SilentlyContinue
+    }
+
+    if (-not (Test-Path $ApkPath)) {
+        throw "Build completed but APK was not found at $ApkPath"
+    }
+
+    $builtVersion = Read-LocalVersion
+    if ($builtVersion.Code -ne $ExpectedCode -or $builtVersion.Name -ne $ExpectedName) {
+        throw "app/build.gradle changed during publishing. Start publish-update.cmd again."
+    }
+
+    return [pscustomobject]@{
+        Hash = (Get-FileHash $ApkPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        Size = (Get-Item $ApkPath).Length
+    }
+}
+
 Set-Location $Root
 Write-Host "============================================================"
 Write-Host "              ARGUS REMOTE UPDATE PUBLISHER"
@@ -75,11 +116,14 @@ try {
 if ($publishedBefore -ne $null) {
     $remoteVersionCode = [int]$publishedBefore.versionCode
     if ($remoteVersionCode -gt $VersionCode) {
-        throw "Cloudflare already advertises newer versionCode $remoteVersionCode. Increase app/build.gradle versionCode before publishing."
-    }
-    if ($remoteVersionCode -eq $VersionCode) {
+        $VersionCode = $remoteVersionCode + 1
+        Write-Host "[AUTO] Local versionCode is behind Cloudflare. Bumping app/build.gradle to $VersionCode." -ForegroundColor Yellow
+        Set-LocalVersionCode $VersionCode
+        $localVersion = Read-LocalVersion
+        $VersionName = $localVersion.Name
+    } elseif ($remoteVersionCode -eq $VersionCode) {
         Write-Host "[INFO] Cloudflare already advertises this versionCode. The APK will be rebuilt and compared by SHA-256."
-        Write-Host "[INFO] If it is the exact same APK, publishing will resume at verification instead of failing."
+        Write-Host "[INFO] If the APK changed, publish-update will automatically bump versionCode and rebuild it."
     }
 }
 
@@ -113,28 +157,9 @@ if (-not (Test-Path $SigningBackup)) {
     Write-Host "[OK] Signing key matches the preserved updater key."
 }
 
-Write-Step "BUILD"
-$env:ARGUS_PUBLISHING = "1"
-try {
-    & (Join-Path $Root "buildapp.cmd")
-    if ($LASTEXITCODE -ne 0) {
-        throw "Android build failed with exit code $LASTEXITCODE"
-    }
-} finally {
-    Remove-Item Env:ARGUS_PUBLISHING -ErrorAction SilentlyContinue
-}
-
-if (-not (Test-Path $ApkPath)) {
-    throw "Build completed but APK was not found at $ApkPath"
-}
-
-$localVersionAfterBuild = Read-LocalVersion
-if ($localVersionAfterBuild.Code -ne $VersionCode -or $localVersionAfterBuild.Name -ne $VersionName) {
-    throw "app/build.gradle changed during publishing. Start publish-update.cmd again."
-}
-
-$ApkHash = (Get-FileHash $ApkPath -Algorithm SHA256).Hash.ToLowerInvariant()
-$ApkSize = (Get-Item $ApkPath).Length
+$build = Build-ArgusApk $VersionCode $VersionName "BUILD"
+$ApkHash = $build.Hash
+$ApkSize = $build.Size
 $ObjectKey = "$Prefix/app-v$VersionCode.apk"
 $AlreadyPublishedIdentically = $false
 
@@ -146,7 +171,18 @@ if ($publishedBefore -ne $null -and [int]$publishedBefore.versionCode -eq $Versi
         Write-Host "[OK] Cloudflare already has this exact APK and version."
         Write-Host "[OK] Skipping duplicate upload and continuing to verification."
     } else {
-        throw "versionCode $VersionCode is already published with a different APK or version name. Increase app/build.gradle versionCode before publishing another build."
+        $VersionCode = ([int]$publishedBefore.versionCode) + 1
+        Write-Step "AUTO VERSION BUMP"
+        Write-Host "[AUTO] versionCode $($publishedBefore.versionCode) is already published with a different APK."
+        Write-Host "[AUTO] Bumping app/build.gradle to versionCode $VersionCode and rebuilding."
+        Set-LocalVersionCode $VersionCode
+
+        $localVersion = Read-LocalVersion
+        $VersionName = $localVersion.Name
+        $build = Build-ArgusApk $VersionCode $VersionName "REBUILD"
+        $ApkHash = $build.Hash
+        $ApkSize = $build.Size
+        $ObjectKey = "$Prefix/app-v$VersionCode.apk"
     }
 }
 
