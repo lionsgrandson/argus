@@ -17,7 +17,7 @@ android {
         minSdk 26
         targetSdk 35
         versionCode 34
-        versionName '3.6.2-auto-permission-audit'
+        versionName '3.6.3-transmission-grace'
         buildConfigField 'String', 'DEFAULT_RELAY_URL', groovy.json.JsonOutput.toJson(bakedRelay)
         buildConfigField 'String', 'FIREBASE_API_KEY', groovy.json.JsonOutput.toJson(firebaseApiKey)
         buildConfigField 'String', 'FIREBASE_APP_ID', groovy.json.JsonOutput.toJson(firebaseAppId)
