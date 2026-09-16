@@ -19,9 +19,9 @@ public class ReceiverService extends Service {
     private static final int ALERT_ID = 1099;
     private static final int OLD_ERROR_NOTIF_ID = 1201;
     private static final int SAMPLE_RATE = 8000;
-    private static final long MEDIA_GRACE_MS = 12000L;
-    private static final long DISCONNECT_GRACE_MS = 10000L;
-    private static final long DATA_STALE_MS = 8000L;
+    private static final long MEDIA_GRACE_MS = 60000L;
+    private static final long DISCONNECT_GRACE_MS = 60000L;
+    private static final long DATA_STALE_MS = 60000L;
     private static final long CHILD_HEALTH_FRESH_MS = 8000L;
     static final String ACTION_SET_STREAM = "com.example.babymonitor.SET_STREAM";
     static final String EXTRA_CAMERA = "camera";
