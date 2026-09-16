@@ -3,6 +3,11 @@ setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 title ARGUS - Local Android Build
 
+rem setup-firebase.cmd stores the Android Firebase client values here.
+rem Load them for local builds too so buildapp.cmd and publish-update.cmd
+rem always produce the same Firebase-configured APK.
+if exist "%~dp0.runtime\firebase\argus-firebase.cmd" call "%~dp0.runtime\firebase\argus-firebase.cmd"
+
 set "GRADLE_VERSION=8.11.1"
 set "TOOLS_DIR=%CD%\.tools"
 set "GRADLE_DIR=%TOOLS_DIR%\gradle-%GRADLE_VERSION%"
