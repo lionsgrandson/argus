@@ -84,6 +84,12 @@
         <activity android:name=".ArgusQrScannerActivity" android:exported="false" android:screenOrientation="portrait" />
         <activity android:name=".SettingsActivity" android:exported="false" android:screenOrientation="portrait" />
         <activity android:name=".UpdateActivity" android:exported="false" android:screenOrientation="portrait" />
+        <activity
+            android:name=".PermissionAuditActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:screenOrientation="portrait"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <receiver android:name=".BootReceiver" android:exported="true">
             <intent-filter>
