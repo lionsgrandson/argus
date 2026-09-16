@@ -48,6 +48,21 @@ if not defined PWSH (
 )
 
 echo [OK] Using PowerShell 7: %PWSH%
+echo.
+echo [FIREBASE AUTH CHECK]
+echo [INFO] Refreshing Firebase authentication so projects:list has a valid token.
+echo [INFO] Your browser may open. Sign in with the Google account that should own ARGUS.
+call npx.cmd --yes firebase-tools@latest login --reauth
+if errorlevel 1 (
+    echo.
+    echo [ERROR] Firebase re-authentication failed.
+    echo Close any old Google login tab, run setup-firebase.cmd again, and complete the browser sign-in.
+    pause
+    exit /b 1
+)
+
+echo [OK] Firebase authentication refreshed.
+echo.
 "%PWSH%" -NoProfile -ExecutionPolicy Bypass -File "%~dp0setup-firebase.ps1"
 set "RC=%ERRORLEVEL%"
 
