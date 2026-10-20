@@ -13,8 +13,8 @@ This repository contains the ARGUS Android app and encrypted internet relay.
 - Separate random relay authentication token.
 - Pairing secret stored with Android Keystore.
 - No recordings or media database; live frames are kept in memory only.
-- Automatic reconnect.
-- Parent connection-loss alarm after previously-live audio disappears for about 8 seconds.
+- Automatic reconnect with WebSocket and hibernation-safe application heartbeats plus throttled FCM recovery requests for unexpected Child disconnects.
+- Parent high-priority connection-loss alarm after previously authenticated child data disappears (normally about 10–15 seconds, subject to device scheduling).
 - Remote Child-phone battery/charging status and low-battery warning.
 - Sticky foreground services, wake/Wi-Fi locks, and `stopWithTask=false` keep ARGUS running when the app UI is closed or the screen is locked.
 - Optional root-assisted reboot recovery, while retaining the normal non-rooted behavior on ordinary phones.
