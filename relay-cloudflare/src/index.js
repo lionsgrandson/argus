@@ -290,6 +290,10 @@ export class RoomV4 extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.sessions = new Map();
+    // Heartbeat replies work even while this Durable Object is hibernated.
+    this.ctx.setWebSocketAutoResponse(
+      new WebSocketRequestResponsePair("ARGUS:PING", "ARGUS:PONG"),
+    );
 
     for (const ws of this.ctx.getWebSockets()) {
       const attachment = wsAttachment(ws);
@@ -420,11 +424,23 @@ export class RoomV4 extends DurableObject {
   }
 
   async wakeRegisteredChild(hint) {
+    // Do not wake a child that rejoined during the close callback.
+    if ([...this.sessions.values()].some((session) => session.role === "baby")) return;
+
+    const now = Date.now();
+    const lastWakeAt = Number((await this.ctx.storage.get("lastFcmWakeAt")) || 0);
+    if (now - lastWakeAt < 60_000) {
+      logEvent("fcm_wake_skipped", { room: hint, reason: "cooldown" });
+      return;
+    }
+
     const token = await this.ctx.storage.get("babyFcmToken");
     if (!validFcmToken(token)) {
       logEvent("fcm_wake_skipped", { room: hint, reason: "no_registered_token" });
       return;
     }
+    if ([...this.sessions.values()].some((session) => session.role === "baby")) return;
+    await this.ctx.storage.put("lastFcmWakeAt", now);
     await sendFcmWake(this.env, token, hint);
   }
 
@@ -480,8 +496,9 @@ export class RoomV4 extends DurableObject {
       code,
       clean: Boolean(wasClean),
     });
-    try { ws.close(code || 1000, reason || "Closed"); } catch {}
-    this.notifyOffline(session?.role);
+    // The configured Cloudflare runtime completes close handshakes automatically.
+    // Code 1006 must never be sent in a WebSocket close frame.
+    this.notifyOffline(session?.role, session?.roomHint, !wasClean || code === 1006);
   }
 
   async webSocketError(ws, error) {
@@ -493,21 +510,30 @@ export class RoomV4 extends DurableObject {
       code: "E212",
       message: error?.message || "websocket error",
     });
-    this.notifyOffline(session?.role);
+    this.notifyOffline(session?.role, session?.roomHint, true);
   }
 
-  notifyOffline(closedRole) {
+  notifyOffline(closedRole, hint = "unknown", unexpected = false) {
     if (!closedRole) return;
 
+    // Never mark a replacement socket offline.
     for (const [, state] of this.sessions) {
       if (state.role === closedRole) return;
     }
 
     const otherRole = closedRole === "baby" ? "parent" : "baby";
+    let parentStillConnected = false;
     for (const [socket, state] of this.sessions) {
       if (state.role === otherRole) {
         try { socket.send("PEER:OFFLINE"); } catch {}
+        if (closedRole === "baby") parentStillConnected = true;
       }
+    }
+
+    // Previously FCM recovery only ran when a parent *newly* joined.
+    if (closedRole === "baby" && unexpected && parentStillConnected) {
+      logEvent("child_recovery_requested", { room: hint });
+      this.ctx.waitUntil(this.wakeRegisteredChild(hint));
     }
   }
 }
