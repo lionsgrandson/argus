@@ -31,7 +31,7 @@ final class SecureWebSocket {
     private volatile InputStream in;
     private volatile OutputStream out;
     private volatile boolean open;
-    private volatile long lastInboundAt = System.currentTimeMillis();
+    private volatile long lastInboundAt = android.os.SystemClock.elapsedRealtime();
     private final Object writeLock = new Object();
     private final SecureRandom random = new SecureRandom();
     private final AtomicBoolean terminalNotified = new AtomicBoolean(false);
@@ -153,7 +153,7 @@ final class SecureWebSocket {
         }
 
         terminalNotified.set(false);
-        lastInboundAt = System.currentTimeMillis();
+        lastInboundAt = android.os.SystemClock.elapsedRealtime();
         open = true;
         listener.onOpen();
         Thread reader = new Thread(this::readLoop, "ArgusWS");
@@ -231,11 +231,14 @@ final class SecureWebSocket {
             try {
                 Thread.sleep(HEARTBEAT_INTERVAL_MS);
                 if (!open) return;
-                long silentForMs = System.currentTimeMillis() - lastInboundAt;
+                long silentForMs = android.os.SystemClock.elapsedRealtime() - lastInboundAt;
                 if (silentForMs > HEARTBEAT_TIMEOUT_MS) {
                     throw new SocketTimeoutException("WebSocket heartbeat timed out after " + silentForMs + " ms");
                 }
+                // RFC ping keeps compatibility with existing relay deployments.
                 sendFrame(0x9, "hb".getBytes(StandardCharsets.US_ASCII));
+                // Cloudflare auto-responds without waking the Durable Object.
+                sendText("ARGUS:PING");
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return;
@@ -274,7 +277,7 @@ final class SecureWebSocket {
                 }
                 byte[] mask = masked ? readExactly(in, 4) : null;
                 byte[] payload = readExactly(in, (int) len);
-                lastInboundAt = System.currentTimeMillis();
+                lastInboundAt = android.os.SystemClock.elapsedRealtime();
                 if (masked) {
                     for (int i = 0; i < payload.length; i++) payload[i] ^= mask[i & 3];
                 }
