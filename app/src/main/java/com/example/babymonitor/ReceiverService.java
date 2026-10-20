@@ -20,8 +20,8 @@ public class ReceiverService extends Service {
     private static final int OLD_ERROR_NOTIF_ID = 1201;
     private static final int SAMPLE_RATE = 8000;
     private static final long MEDIA_GRACE_MS = 60000L;
-    private static final long DISCONNECT_GRACE_MS = 60000L;
-    private static final long DATA_STALE_MS = 60000L;
+    private static final long DISCONNECT_GRACE_MS = 10000L;
+    private static final long DATA_STALE_MS = 12000L;
     private static final long CHILD_HEALTH_FRESH_MS = 8000L;
     static final String ACTION_SET_STREAM = "com.example.babymonitor.SET_STREAM";
     static final String EXTRA_CAMERA = "camera";
@@ -46,6 +46,8 @@ public class ReceiverService extends Service {
     private volatile long lastUiStateAt = 0L;
     private volatile long mediaChangedAt = System.currentTimeMillis();
     private volatile long disconnectedAt = 0L;
+    private volatile long networkUnavailableAt = 0L;
+    private volatile boolean hasReceivedChildData = false;
     private volatile Throwable lastConnectionError;
     private volatile boolean connectionErrorReported = false;
     private volatile boolean mediaErrorReported = false;
@@ -225,6 +227,8 @@ public class ReceiverService extends Service {
             if (d.sequence <= lastSequence) return;
             lastSequence = d.sequence;
             AppPrefs.parentDataReceived(this);
+            hasReceivedChildData = true;
+            clearConnectionAlarm();
             clearRecoveredConnectivityError();
             markPeerOnline();
 
@@ -305,7 +309,7 @@ public class ReceiverService extends Service {
         if (camera) lastVideoAt = now;
         if (mic) lastAudioAt = now;
         if ("E405".equals(AppPrefs.lastErrorCode(this))) ErrorReporter.clear(this, "parent");
-        clearConnectionAlarm();
+        // Stay in alarm until authenticated child packets actually return.
     }
 
     private void audioPlaybackLoop() {
@@ -349,6 +353,10 @@ public class ReceiverService extends Service {
         long now = System.currentTimeMillis();
 
         if (!parentInternetAvailable()) {
+            if (networkUnavailableAt == 0L) networkUnavailableAt = now;
+            if (hasReceivedChildData && now - networkUnavailableAt >= DISCONNECT_GRACE_MS) {
+                showConnectionAlarm("אין אינטרנט בטלפון ההורה");
+            }
             if (!connectionErrorReported) {
                 connectionErrorReported = true;
                 ErrorReporter.report(this, "parent", "E220",
@@ -357,10 +365,12 @@ public class ReceiverService extends Service {
             }
             return;
         }
+        networkUnavailableAt = 0L;
 
         if (!peerOnline.get()) {
-            if (disconnectedAt > 0L && now - disconnectedAt >= DISCONNECT_GRACE_MS
-                    && !connectionErrorReported) {
+            if (disconnectedAt > 0L && now - disconnectedAt >= DISCONNECT_GRACE_MS) {
+                if (hasReceivedChildData) showConnectionAlarm("טלפון הילד אינו מחובר");
+                if (connectionErrorReported) return;
                 connectionErrorReported = true;
                 Throwable error = lastConnectionError;
                 SecureWebSocket socket = ws;
@@ -376,7 +386,8 @@ public class ReceiverService extends Service {
             return;
         }
 
-        if (AppPrefs.parentDataAgeMs(this) > DATA_STALE_MS) {
+        if (hasReceivedChildData && AppPrefs.parentDataAgeMs(this) > DATA_STALE_MS) {
+            showConnectionAlarm("אין מידע חדש מטלפון הילד");
             if (!connectionErrorReported) {
                 connectionErrorReported = true;
                 ErrorReporter.report(this, "parent", "E222",
@@ -464,6 +475,26 @@ public class ReceiverService extends Service {
         }
     }
 
+    private void showConnectionAlarm(String reason) {
+        if (!hasReceivedChildData || !running.get()) return;
+        NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        if (nm == null) return;
+        Intent open = new Intent(this, MainActivity.class);
+        PendingIntent pi = PendingIntent.getActivity(this, 22, open,
+                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        Notification alarm = new Notification.Builder(this, "argus_connection_alarm_v1")
+                .setSmallIcon(android.R.drawable.stat_notify_error)
+                .setContentTitle("ARGUS: הקשר לטלפון הילד אבד")
+                .setContentText(reason)
+                .setCategory(Notification.CATEGORY_ALARM)
+                .setPriority(Notification.PRIORITY_MAX)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setContentIntent(pi)
+                .build();
+        nm.notify(ALERT_ID, alarm);
+    }
+
     private void clearConnectionAlarm() {
         ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).cancel(ALERT_ID);
     }
@@ -520,6 +551,12 @@ public class ReceiverService extends Service {
     private void createChannels() {
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         nm.createNotificationChannel(new NotificationChannel("argus_receiver", "האזנה של ARGUS", NotificationManager.IMPORTANCE_LOW));
+        NotificationChannel connectionAlarm = new NotificationChannel("argus_connection_alarm_v1",
+                "התראה על אובדן חיבור לטלפון הילד", NotificationManager.IMPORTANCE_HIGH);
+        connectionAlarm.enableVibration(true);
+        connectionAlarm.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM),
+                new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build());
+        nm.createNotificationChannel(connectionAlarm);
         NotificationChannel warnings = new NotificationChannel("argus_warnings", "התראות סוללה של ARGUS", NotificationManager.IMPORTANCE_DEFAULT);
         warnings.enableVibration(true);
         warnings.setDescription("התראות על סוללה נמוכה בטלפון הילד");
