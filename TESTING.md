@@ -25,3 +25,13 @@ Before relying on ARGUS for a long session, test these cases with the actual two
 21. Verify the relay `/health` endpoint is reachable through HTTPS and that the app uses only the configured `wss://.../ws` URL.
 
 Android camera/background behavior can vary by manufacturer, so the screen-off, task-removal, battery-mode, and reboot tests on the exact Child phone model are mandatory for reliability testing.
+
+## WebSocket recovery regression checks
+
+23. After child audio/video arrives, disable Child internet without closing ARGUS. Confirm a persistent high-priority Parent connection-loss notification after roughly 10-15 seconds of missing child data, even if the relay has not yet noticed the dead WebSocket. Check sound, vibration, notification permission, and system channel settings on the actual device.
+24. Restore Child internet. Confirm both audio/video resume without new pairing and the alarm disappears only after an authenticated child packet arrives.
+25. Pause camera and microphone using Parent controls while both remain online. Confirm status packets prevent false connection-loss alarms.
+26. Force unexpected Child socket loss while Parent remains online. Confirm Cloudflare logs `child_recovery_requested`, then `fcm_wake_sent` or an explicit skip/failure. Automatic wake requests must be rate-limited to one per 60 seconds per room.
+27. Normally stopping Child monitoring must not request FCM wake. Android 14+ restrictions prevent a background push from guaranteeing camera/microphone service restart.
+28. Confirm application `ARGUS:PING` receives `ARGUS:PONG` during Durable Object hibernation, while existing WebSocket RFC ping/pong remains compatible.
+29. Confirm same-role socket replacement does not incorrectly mark the new active peer offline.
